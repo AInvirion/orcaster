@@ -1,0 +1,10 @@
+{
+  "message": "Thank you for your contribution! Before we can review and merge your pull request, you need to sign the Orcaster Contributor License Agreement (CLA).\n\n**To sign the CLA:**\n\n1. Read the full agreement: [Orcaster Individual Contributor License Agreement](https://github.com/AInvirion/orcaster/blob/main/CLA.md). It is based on the Apache Software Foundation Individual CLA; AInvirion LLC is the recipient.\n2. Reply to this pull request with this exact statement:\n\n> I have read the Contributor License Agreement and I hereby accept the terms.\n\nBy posting that statement you agree to the terms of CLA.md as published at that link. You sign once; the CLA covers all your later contributions.\n\n---\n\nQuestions? Contact legal@ainvirion.com",
+  "label": "cla-signed",
+  "recheckComment": "recheck",
+  "contributors": [
+    "oscarvalenzuelab",
+    "dantoac",
+    "dependabot[bot]"
+  ]
+}

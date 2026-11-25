@@ -1,0 +1,267 @@
+{% from "_macros.html" import ts %}
+{% extends "base.html" %}
+{% block title %}{{ ws_active_name }} workspace - Orcaster{% endblock %}
+{% block content %}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a href="/admin/" class="breadcrumb-back">
+    <span aria-hidden="true">←</span> Dashboard
+  </a>
+</nav>
+
+<div class="page-header">
+  <h1 class="page-title">
+    {{ ws_active_name }}
+    <span class="page-title-kind muted">workspace</span>
+  </h1>
+  <span class="badge badge-{{ ws_role }}">{{ ws_role }}</span>
+</div>
+
+{% if error %}
+<p class="ws-error" role="alert">{{ error }}</p>
+{% endif %}
+
+{% if invite_url or enrollment_token %}
+{# One-time secret reveal. Rendered with `open` so that without JS it is
+   visible and copyable inline; app.js raises it to showModal() (a dedicated
+   blocking step) and keeps "Done" disabled until it is copied. #}
+<dialog class="reveal-dialog" id="secret-reveal" open
+        aria-labelledby="secret-reveal-title">
+  <article>
+    <header>
+      <h2 class="reveal-dialog-title" id="secret-reveal-title">
+        {% if invite_url %}Invitation link created{% else %}Worker enrollment token created{% endif %}
+      </h2>
+      <p class="reveal-dialog-lead">
+        Copy it now. For security it is shown once and cannot be retrieved later.
+      </p>
+    </header>
+
+    <div class="reveal-dialog-body">
+      {% if invite_url %}
+      <p class="reveal-field-label">
+        Send this link to the new member. They accept it once to join this workspace.
+      </p>
+      <div class="reveal-field">
+        <input class="reveal-value" type="text" readonly value="{{ invite_url }}"
+               data-select-on-click aria-label="Invitation accept URL">
+        <button type="button" class="copy-btn reveal-copy" data-copy="{{ invite_url }}"
+                data-reveal-copy aria-label="Copy invitation link" autofocus>
+          <span class="copy-btn-icon" aria-hidden="true">⧉</span>
+          <span class="copy-btn-text">Copy link</span>
+          <span class="copy-btn-feedback" aria-live="polite"></span>
+        </button>
+      </div>
+      {% endif %}
+
+      {% if enrollment_token %}
+      <p class="reveal-field-label">
+        Paste this into <code>client/.env</code>, then run <code>make up client</code>.
+      </p>
+      <div class="reveal-field reveal-field-block">
+        <pre class="env-block"><code>ORCH_BASE_URL={{ server_base_url }}
+ORCH_ENROLLMENT_TOKEN={{ enrollment_token }}
+ORCH_WORKER_NAME=</code></pre>
+        <button type="button" class="copy-btn reveal-copy"
+                data-copy="ORCH_BASE_URL={{ server_base_url }}&#10;ORCH_ENROLLMENT_TOKEN={{ enrollment_token }}&#10;ORCH_WORKER_NAME="
+                data-reveal-copy aria-label="Copy .env block" autofocus>
+          <span class="copy-btn-icon" aria-hidden="true">⧉</span>
+          <span class="copy-btn-text">Copy .env block</span>
+          <span class="copy-btn-feedback" aria-live="polite"></span>
+        </button>
+      </div>
+      <p class="reveal-note">
+        <a href="/admin/workspaces/pubkey" download="server-ed25519.pub">Download
+        server-ed25519.pub</a> and save it as
+        <code>client/server-ed25519.pub</code> next to the file. It is public,
+        not a secret.
+      </p>
+      {% endif %}
+    </div>
+
+    <footer class="reveal-dialog-footer">
+      <p class="reveal-dialog-hint" data-reveal-hint>Copy the secret to continue.</p>
+      <button type="button" data-reveal-done disabled>Done</button>
+    </footer>
+  </article>
+</dialog>
+{% endif %}
+
+<section class="panel">
+  <h2>Details</h2>
+  <p>
+    Active workspace: <strong>{{ ws_active_name }}</strong> &middot;
+    your role: <strong>{{ ws_role }}</strong>
+  </p>
+  {% if is_owner %}
+  <form method="post" action="/admin/workspaces/rename" class="ws-form">
+    <label for="ws-rename-name">Rename workspace</label>
+    <div class="ws-form-row">
+      <input id="ws-rename-name" type="text" name="name"
+             value="{{ ws_active_name }}" maxlength="200" required>
+      <button type="submit">Rename</button>
+    </div>
+  </form>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Members</h2>
+  {% if members %}
+  {% include "_tz_note.html" %}
+  <figure class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Role</th><th>Joined</th></tr>
+      </thead>
+      <tbody>
+        {% for m in members %}
+        <tr>
+          <td>{{ m.display_name }}</td>
+          <td><span class="badge badge-{{ m.role }}">{{ m.role }}</span></td>
+          <td class="muted">{{ ts(m.created_at, 'datetime') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </figure>
+  {% else %}
+  <p class="muted">No members yet.</p>
+  {% endif %}
+
+  {% if is_owner %}
+  <form method="post" action="/admin/workspaces/invite" class="ws-form">
+    <label for="ws-invite-role">Invite a member</label>
+    <div class="ws-form-row">
+      <select id="ws-invite-role" name="role">
+        <option value="member">member</option>
+        <option value="owner">owner</option>
+      </select>
+      <button type="submit">Generate invitation link</button>
+    </div>
+  </form>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Worker enrollment tokens</h2>
+  <p class="muted">
+    Tokens let a worker register against this workspace. The secret is only
+    shown once at creation; this list shows metadata only.
+  </p>
+  <p class="pill-link-row">
+    <a class="pill-link" href="/admin/workspaces/pubkey"
+       download="server-ed25519.pub">Download server public key</a>
+    <span class="muted">&mdash; every worker needs it to verify task
+    signatures. It is public, not a secret.</span>
+  </p>
+  <p class="pill-link-row">
+    <a class="pill-link"{% if not show_all %} aria-current="page"{% endif %}
+       href="/admin/workspaces">Active</a>
+    <a class="pill-link"{% if show_all %} aria-current="page"{% endif %}
+       href="/admin/workspaces?show=all">All</a>
+    <span class="muted">
+      {% if show_all %}Showing all tokens, including exhausted, revoked and
+      expired.{% else %}Showing active tokens only.{% endif %}
+    </span>
+  </p>
+  {% if tokens %}
+  {% include "_tz_note.html" %}
+  <figure class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Label</th><th>Status</th><th>Uses</th><th>Expires</th><th>Used at</th>
+          <th class="col-actions"><span class="visually-hidden">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in tokens %}
+        <tr>
+          <td>{{ t.label or "—" }}</td>
+          <td><span class="badge badge-{{ t.status }}">{{ t.status }}</span></td>
+          <td class="muted">{{ t.use_count }} / {{ t.max_uses }}</td>
+          <td class="muted">{{ ts(t.expires_at, 'datetime') }}</td>
+          <td class="muted">
+            {{ ts(t.used_at, 'relative') }}
+          </td>
+          <td class="col-actions">
+            {% if t.use_count > 0 %}
+            <button type="button" class="btn-row-action"
+                    hx-get="/admin/workspaces/enrollment-tokens/{{ t.id }}/uses"
+                    hx-target="#uses-{{ t.id }}"
+                    hx-swap="innerHTML">Workers enrolled</button>
+            {% endif %}
+            {% if t.status == "active" %}
+            <form method="post"
+                  action="/admin/workspaces/enrollment-tokens/{{ t.id }}/revoke{% if show_all %}?show=all{% endif %}"
+                  class="ws-inline-form">
+              <button type="submit" class="btn-danger"
+                      data-confirm
+                      data-confirm-tone="danger"
+                      data-confirm-title="Revoke token?"
+                      data-confirm-message="This token can no longer be used to register a worker. This cannot be undone."
+                      data-confirm-ok-label="Revoke token"
+                      data-confirm-url="/admin/workspaces/enrollment-tokens/{{ t.id }}/revoke{% if show_all %}?show=all{% endif %}"
+                      data-confirm-method="POST"
+                      data-confirm-after="reload">Revoke</button>
+            </form>
+            {% elif t.status in ["revoked", "expired", "exhausted"] %}
+            <form method="post"
+                  action="/admin/workspaces/enrollment-tokens/{{ t.id }}/delete{% if show_all %}?show=all{% endif %}"
+                  class="ws-inline-form">
+              <button type="submit" class="btn-row-action danger"
+                      data-confirm
+                      data-confirm-tone="danger"
+                      data-confirm-title="Delete token?"
+                      data-confirm-message="This permanently removes the token record from the list. This cannot be undone."
+                      data-confirm-ok-label="Delete token"
+                      data-confirm-url="/admin/workspaces/enrollment-tokens/{{ t.id }}/delete{% if show_all %}?show=all{% endif %}"
+                      data-confirm-method="POST"
+                      data-confirm-after="reload">Delete</button>
+            </form>
+            {% else %}
+            <span class="muted">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% if t.use_count > 0 %}
+        <tr class="token-uses-row">
+          <td colspan="6"><div id="uses-{{ t.id }}"></div></td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </figure>
+  {% else %}
+  <p class="muted">No enrollment tokens yet.</p>
+  {% endif %}
+
+  <form method="post" action="/admin/workspaces/enrollment-tokens" class="ws-form">
+    <div class="ws-form-title">Generate enrollment token</div>
+    <div class="ws-form-row ws-token-row">
+      <div class="ws-field ws-field-grow">
+        <label for="ws-token-label">Label</label>
+        <input id="ws-token-label" type="text" name="label"
+               placeholder="Optional (e.g. ci-runner)" maxlength="200">
+      </div>
+      <div class="ws-field ws-field-uses">
+        <label for="ws-token-max-uses">Max uses</label>
+        <input id="ws-token-max-uses" type="number" name="max_uses"
+               value="1" min="1" max="1000" required
+               title="Number of workers that can enroll with this token (1 = single use)">
+      </div>
+      <div class="ws-field ws-field-ttl">
+        <label for="ws-token-ttl">Expires in</label>
+        <select id="ws-token-ttl" name="ttl" title="Token lifetime">
+          <option value="1h">1 hour</option>
+          <option value="1d">1 day</option>
+          <option value="7d" selected>7 days</option>
+          <option value="30d">30 days</option>
+        </select>
+      </div>
+      <button type="submit">Generate token</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

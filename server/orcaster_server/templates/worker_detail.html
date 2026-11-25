@@ -1,0 +1,407 @@
+{% from "_macros.html" import ts %}
+{% extends "base.html" %}
+{% block title %}Worker {{ worker.hostname }} - Orcaster{% endblock %}
+{% block body_class %}worker-detail-body{% endblock %}
+{% block content %}
+
+{# Liveness dot: classification by age of the last heartbeat. Three bands that
+   match what the SRE expects at a glance: ok (<30s, within the poll
+   interval), warn (30-120s, at least one cycle passed without reporting), danger
+   (>120s, probably down). No heartbeat (None) → muted. #}
+{% set _hb = heartbeat_age_seconds %}
+{% set _liveness = "ok" if (_hb is not none and _hb < 30)
+                else "warn" if (_hb is not none and _hb < 120)
+                else "danger" if _hb is not none
+                else "none" %}
+{% set _ram_pct = usage_pct(worker.ram_used_mb, worker.ram_mb) %}
+{% set _disk_pct = usage_pct(worker.disk_used_mb, worker.disk_mb) %}
+
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a href="/admin/" class="breadcrumb-back">
+    <span aria-hidden="true">←</span> Workers
+  </a>
+</nav>
+
+<div class="page-header worker-detail-header">
+  <div class="worker-detail-title">
+    <h1 class="page-title">
+      <span class="worker-detail-host">{{ worker.hostname }}</span>
+      {% if worker.name and worker.name != worker.hostname %}
+      <span class="worker-detail-name muted">{{ worker.name }}</span>
+      {% endif %}
+      {# Dot + badge: the dot gives liveness at a glance (heartbeat recency),
+         the badge gives the declared state (online/offline). They can diverge:
+         status=online with a red dot means "the server believes it is online but
+         the heartbeat is not arriving" — a real case that is useful to read. #}
+      <span class="status-dot worker-liveness worker-liveness-{{ _liveness }}"
+            aria-hidden="true"
+            title="{% if _hb is none %}No heartbeat yet{% elif _liveness == 'ok' %}Heartbeat {{ _hb }}s ago{% elif _liveness == 'warn' %}Heartbeat {{ _hb }}s ago — late{% else %}Heartbeat {{ _hb }}s ago — stale{% endif %}"></span>
+      <span id="worker-status-badge" class="badge badge-{{ worker.status }}">{{ worker.status }}</span>
+      {# "deleted" badge when the worker is soft-deleted. The detail
+         view stays accessible (historical link from an attempt), but mutating
+         actions are hidden. #}
+      {% if worker.deleted_at %}
+      <span class="badge badge-cancelled">
+        deleted · {{ ts(worker.deleted_at, 'relative') }}
+      </span>
+      {% endif %}
+    </h1>
+
+    <p class="worker-detail-meta">
+      <span class="worker-detail-id"
+            data-copy-source="{{ worker.id }}"
+            title="Worker UUID — click to copy">
+        <code>{{ worker.id }}</code>
+        <button type="button" class="copy-btn" data-copy="{{ worker.id }}"
+                aria-label="Copy worker UUID">
+          <span class="copy-btn-icon" aria-hidden="true">⧉</span>
+          <span class="copy-btn-feedback" aria-live="polite"></span>
+        </button>
+      </span>
+    </p>
+
+    {# Three metadata blocks grouped by domain (Hardware / Runtime /
+       Lifecycle) instead of three `<p>` with middots. The inline small-caps
+       label visually separates each group without needing headings or
+       cards. We keep the same density as `task-detail-meta`. #}
+    <div class="worker-detail-groups">
+      <div class="worker-meta-group">
+        <span class="worker-meta-label">Hardware</span>
+        <span class="worker-meta-body">
+          <span class="worker-meta-platform">{{ worker.os }} · {{ worker.arch }}</span>
+          <span class="worker-detail-sep" aria-hidden="true">·</span>
+          <span class="worker-meta-resource" title="RAM used / total">
+            <span class="worker-meta-resource-label">RAM</span>
+            {% if worker.ram_mb %}
+              <span class="worker-meta-resource-value">{{ worker.ram_used_mb | mb_human }} / {{ worker.ram_mb | mb_human }}</span>
+              <span class="usage-bar usage-bar-inline"
+                    aria-label="RAM {{ _ram_pct }}% used"
+                    title="{{ _ram_pct }}% used">
+                <span class="usage-bar-fill usage-{{ 'high' if _ram_pct >= 85 else 'mid' if _ram_pct >= 60 else 'low' }}"
+                      data-pct="{{ '%.4f' % (_ram_pct / 100) }}"></span>
+              </span>
+            {% else %}
+              <span class="muted">unknown</span>
+            {% endif %}
+          </span>
+          <span class="worker-detail-sep" aria-hidden="true">·</span>
+          <span class="worker-meta-resource" title="Disk used / total">
+            <span class="worker-meta-resource-label">Disk</span>
+            {% if worker.disk_mb %}
+              <span class="worker-meta-resource-value">{{ worker.disk_used_mb | mb_human }} / {{ worker.disk_mb | mb_human }}</span>
+              <span class="usage-bar usage-bar-inline"
+                    aria-label="Disk {{ _disk_pct }}% used"
+                    title="{{ _disk_pct }}% used">
+                <span class="usage-bar-fill usage-{{ 'high' if _disk_pct >= 85 else 'mid' if _disk_pct >= 60 else 'low' }}"
+                      data-pct="{{ '%.4f' % (_disk_pct / 100) }}"></span>
+              </span>
+            {% else %}
+              <span class="muted">unknown</span>
+            {% endif %}
+          </span>
+        </span>
+      </div>
+
+      <div class="worker-meta-group">
+        <span class="worker-meta-label">Runtime</span>
+        <span class="worker-meta-body">
+          {% if worker.version %}
+            <code class="worker-meta-version">v{{ worker.version }}</code>
+          {% else %}
+            <span class="muted">no version reported</span>
+          {% endif %}
+        </span>
+      </div>
+
+      <div class="worker-meta-group">
+        <span class="worker-meta-label">Lifecycle</span>
+        <span class="worker-meta-body">
+          {% if worker.registered_at %}
+            <span>registered
+              {{ ts(worker.registered_at, 'relative') }}
+            </span>
+          {% else %}
+            <span class="muted">no registration time</span>
+          {% endif %}
+          <span class="worker-detail-sep" aria-hidden="true">·</span>
+          {% if worker.last_heartbeat_at %}
+            <span>last heartbeat
+              {{ ts(worker.last_heartbeat_at, 'relative') }}
+            </span>
+          {% else %}
+            <span class="muted">no heartbeats yet</span>
+          {% endif %}
+        </span>
+      </div>
+    </div>
+  </div>
+
+  {% if not worker.deleted_at %}
+  <div class="worker-detail-actions">
+    {# Tri-state, not a toggle: `pause` requires status='online' and `resume`
+       requires status='paused'; any other case answers 409. A toggle
+       branched on `status == 'paused'` would make an offline worker show
+       Pause and the click would fail. Unlike the neighbouring buttons (which use
+       hx-confirm with plain text, i.e. the native confirm()), these use the
+       custom dialog: it is the only one with a reason textarea. Warn tone and not
+       danger because the action is reversible.
+       hx-swap="none": the 3s poller already brings #worker-status-badge via OOB,
+       but the button itself is not resynced with that poll (on purpose: if the
+       poll landed while the reason dialog is open, the swap would replace the
+       node and on confirm htmx would silently lose the action). That is why the
+       refresh of this button is tied to hx-on::after-request, fired ONCE
+       after the successful response of the POST itself, never by the poller.
+       Worker control is owner-only (the endpoints answer 403 to members), so
+       members see the status but no control buttons. #}
+    {% if is_owner %}
+    {% if worker.status == "online" %}
+    <button class="btn-detail-action"
+            hx-post="/admin/workers/{{ worker.id }}/pause"
+            hx-swap="none"
+            hx-confirm="custom" data-confirm
+            data-confirm-tone="warn"
+            data-confirm-title="Pause worker {{ worker.hostname }}?"
+            data-confirm-message="It stops claiming new tasks. Its {{ throughput.active_count or 0 }} active execution(s) keep running until they finish."
+            data-confirm-ok-label="Pause worker"
+            data-confirm-reason="Reason (optional)"
+            data-after-request="reload">
+      Pause
+    </button>
+    {% elif worker.status == "paused" %}
+    <button class="btn-detail-action"
+            hx-post="/admin/workers/{{ worker.id }}/resume"
+            hx-swap="none"
+            hx-confirm="custom" data-confirm
+            data-confirm-tone="warn"
+            data-confirm-title="Resume worker {{ worker.hostname }}?"
+            data-confirm-message="It becomes eligible for new tasks again on its next poll."
+            data-confirm-ok-label="Resume worker"
+            data-confirm-reason="Reason (optional)"
+            data-after-request="reload">
+      Resume
+    </button>
+    {% else %}
+    {# Reason accessible by keyboard and screen reader: a
+       <button disabled> never receives focus by native DOM behaviour,
+       so `title` was only reachable with mouse hover. The same info-tip
+       pattern already used by Delete and Clear cache further down in this
+       template is reused: focusable icon with aria-describedby + role="tooltip". #}
+    <span class="info-tip worker-detail-action-tip">
+      <button type="button" class="info-tip-btn"
+              aria-describedby="worker-pause-tip-bubble"
+              aria-label="Why pause is unavailable"></button>
+      <span role="tooltip" id="worker-pause-tip-bubble" class="info-tip-bubble">
+        Only an online worker can be paused; this one is {{ worker.status }}.
+      </span>
+    </span>
+    <button class="btn-detail-action" disabled
+            aria-describedby="worker-pause-tip-bubble">
+      Pause
+    </button>
+    {% endif %}
+    {# Info-tip before the button (same pattern as task_detail.html). Hover AND
+       focus (APG); the button references this bubble via aria-describedby. #}
+    <span class="info-tip worker-detail-action-tip">
+      <button type="button" class="info-tip-btn"
+              aria-describedby="worker-delete-tip-bubble"
+              aria-label="About deleting this worker"></button>
+      <span role="tooltip" id="worker-delete-tip-bubble" class="info-tip-bubble">
+        Deleting removes the worker from the registry.
+        {% if worker.status == "offline" %}
+        It is currently <strong>offline</strong>, so no active executions are
+        affected.
+        {% else %}
+        It is currently <strong>{{ worker.status }}</strong> with
+        {{ throughput.active_count or 0 }} active execution(s); force-delete
+        cancels them as part of removal.
+        {% endif %}
+        This cannot be undone.
+      </span>
+    </span>
+    {% if worker.status == "offline" %}
+    <button class="btn-detail-action btn-detail-action-danger"
+            aria-describedby="worker-delete-tip-bubble"
+            hx-delete="/admin/workers/{{ worker.id }}"
+            hx-confirm="Delete worker {{ worker.hostname }}? It is offline; this cannot be undone."
+            data-after-request="dashboard">
+      Delete worker
+    </button>
+    {% else %}
+    <button class="btn-detail-action btn-detail-action-danger"
+            aria-describedby="worker-delete-tip-bubble"
+            hx-delete="/admin/workers/{{ worker.id }}?force=true"
+            hx-confirm="WARNING: worker {{ worker.hostname }} is {{ worker.status }}. Deleting with force=true will cancel its active executions ({{ throughput.active_count or 0 }}) and remove it. Confirm?"
+            data-after-request="dashboard">
+      Delete (force)
+    </button>
+    {% endif %}
+    {% endif %}
+    <span id="worker-cache-block" class="worker-cache-block">
+      {# Server-side disk gate: closes the observability gap.
+         It lives inside #worker-cache-block so the 3s OOB refreshes it.
+         A gated worker looked `online` and idle, indistinguishable from a
+         healthy one; here we name it with the measured fraction and the
+         floor. #}
+      {% if disk_gated %}
+      <span class="badge badge-storage-gated"
+            title="Free disk {{ (worker.free_disk_fraction * 100) | round(1) }}% is below the claim floor of {{ (claim_min_free_fraction * 100) | round(0, 'floor') | int }}%; the server is holding off new tasks for this worker until it recovers space.">storage-gated</span>
+      {% endif %}
+      <span class="worker-cache-status">
+        {% if cache_flush_pending %}
+          Cleaning cache&hellip;
+        {% elif cache_flush_timed_out %}
+          Cache flush timed out (requested {{ cache_flush_requested_at | relative_time }})
+        {% elif cache_flush_done_at %}
+          Last cleaned: {{ cache_flush_done_at | relative_time }}
+        {% else %}
+          Cache not cleaned yet
+        {% endif %}
+      </span>
+      {% if is_owner %}
+      <span class="info-tip worker-detail-action-tip">
+        <button type="button" class="info-tip-btn"
+                aria-describedby="worker-cache-tip-bubble"
+                aria-label="About clearing this worker's cache"></button>
+        <span role="tooltip" id="worker-cache-tip-bubble" class="info-tip-bubble">
+          Clears the worker's disk cache (task scratch and UV cache). The worker
+          runs the cleanup when it next reports idle; freed space shows up in its
+          disk usage afterwards.
+        </span>
+      </span>
+      <button class="btn-detail-action"
+              aria-describedby="worker-cache-tip-bubble"
+              hx-post="/admin/workers/{{ worker.id }}/clear-cache"
+              hx-swap="none"
+              hx-confirm="Clear the disk cache on worker {{ worker.hostname }}?"
+              {% if cache_flush_pending %}disabled{% endif %}>
+        Clear cache
+      </button>
+      {% endif %}
+    </span>
+  </div>
+  {% endif %}
+</div>
+
+<div hx-get="/admin/workers/{{ worker.id }}" hx-trigger="every 3s"
+     hx-select="#executions-block" hx-target="#executions-block" hx-swap="outerHTML"
+     hx-select-oob="#worker-status-badge,#worker-cache-block">
+  <section id="executions-block" class="executions-block worker-executions-block" aria-label="Executions">
+    <header class="executions-head">
+      <h2>Executions</h2>
+      <div id="worker-throughput" class="worker-throughput" aria-label="Live throughput">
+        <div class="worker-throughput-cell">
+          <span class="worker-throughput-num{% if throughput.active_count and throughput.active_count > 0 %} worker-throughput-num-active{% endif %}">
+            {{ throughput.active_count or 0 }}
+          </span>
+          <span class="worker-throughput-label">
+            active
+            <span class="info-tip info-tip-inline">
+              <button type="button" class="info-tip-btn"
+                      aria-describedby="tt-active-tip"
+                      aria-label="About active executions"></button>
+              <span role="tooltip" id="tt-active-tip" class="info-tip-bubble">
+                Executions currently <strong>assigned</strong>, <strong>claimed</strong>
+                or <strong>running</strong> on this worker.
+              </span>
+            </span>
+          </span>
+        </div>
+        <div class="worker-throughput-cell">
+          <span class="worker-throughput-num{% if throughput.recent_count and throughput.recent_count > 0 %} worker-throughput-num-recent{% endif %}">
+            {{ throughput.recent_count or 0 }}
+          </span>
+          <span class="worker-throughput-label">
+            recent (60s)
+            <span class="info-tip info-tip-inline">
+              <button type="button" class="info-tip-btn"
+                      aria-describedby="tt-recent-tip"
+                      aria-label="About recent executions"></button>
+              <span role="tooltip" id="tt-recent-tip" class="info-tip-bubble">
+                Executions that <strong>started or finished</strong> in the
+                last 60 seconds. Quick pulse on this worker's activity.
+              </span>
+            </span>
+          </span>
+        </div>
+      </div>
+    </header>
+
+    {# hx-preserve: the block is re-rendered every 3s by polling; without this,
+       each swap would repaint the server-side fallback "Times shown in
+       UTC." overwriting the text that app.js already rewrote to local time. #}
+    {% if executions %}{% with tz_note_id = "tz-note-executions" %}{% include "_tz_note.html" %}{% endwith %}{% endif %}
+
+    <figure class="table-wrap executions-table-wrap">
+    <table class="executions-table worker-executions-table">
+      <thead>
+        <tr>
+          <th class="col-wexec-task">Task</th>
+          <th class="col-wexec-status">Status</th>
+          <th class="col-wexec-started">Started</th>
+          <th class="col-wexec-duration">Duration</th>
+          <th class="col-wexec-exit">Exit</th>
+          <th class="col-wexec-output"><span class="visually-hidden">Output</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in executions %}
+        {% set _args = e.task_payload | args_pretty %}
+        <tr class="execution-row">
+          <td class="col-wexec-task">
+            <a class="wexec-task-link" href="/admin/tasks/{{ e.task_id }}">
+              <span class="wexec-task-id">#{{ e.task_id }}</span>
+              {% if e.attempt_index and e.attempt_index > 1 %}
+              <span class="wexec-attempt-num" title="Attempt {{ e.attempt_index }} on this worker">
+                ·{{ e.attempt_index }}
+              </span>
+              {% endif %}
+              {% if _args %}
+              <code class="cmd-chip wexec-task-args">{{ _args }}</code>
+              {% endif %}
+            </a>
+          </td>
+          <td class="col-wexec-status"><span class="badge badge-{{ e.status }}">{{ e.status }}</span></td>
+          <td class="col-wexec-started">{{ ts(e.started_at, 'datetime') }}</td>
+          <td class="col-wexec-duration">
+            {% if e.duration_seconds is not none %}
+              <span class="exec-duration">{{ e.duration_seconds | duration_human }}</span>
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td class="col-wexec-exit">
+            {# Exit visible only when there is a value; the `0` is muted so it does not
+               compete with non-zero exits (which are informative). #}
+            {% if e.exit_code is not none %}
+              <code class="exec-exit-code exec-exit-{{ 'ok' if e.exit_code == 0 else 'err' }}">{{ e.exit_code }}</code>
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td class="col-wexec-output">
+            {% if e.id %}
+            <a class="exec-output-link" href="/admin/executions/{{ e.id }}/output">
+              output →
+            </a>
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" class="muted empty-row">
+            <div class="executions-empty">
+              <span class="executions-empty-title">No executions assigned</span>
+              <span class="executions-empty-hint">Attempts on this worker will appear here as tasks claim it.</span>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </figure>
+  </section>
+</div>
+
+{% endblock %}

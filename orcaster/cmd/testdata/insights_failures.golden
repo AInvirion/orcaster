@@ -1,0 +1,27 @@
+Failed tasks: 9  (since 2026-06-01 00:00:00 UTC, until -, limit 50)
+Computed at 2026-06-26 12:00:00 UTC
+
+By exit code:
+  EXIT  COUNT
+  1     6
+  137   2
+  -     1
+
+By worker:
+  WORKER    COUNT
+  worker-1  5
+  worker-2  3
+
+By signature (2):
+
+  [6x] modulenotfounderror: no module named '<path>'
+       exit codes: 1
+       example: task 42  execution 3f2a0000-0000-0000-0000-0000000000e9  worker worker-1  exit 1
+       command: python -m job --input x
+       stderr: ModuleNotFoundError: no module named 'foo'
+       samples: 42, 43, 44, 45, 46, 47
+
+  [1x] no-stderr:exit=null
+       exit codes: -
+       example: task 70  execution -  worker -  exit -
+       samples: 70

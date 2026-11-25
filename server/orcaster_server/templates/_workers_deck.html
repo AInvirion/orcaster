@@ -1,0 +1,242 @@
+{% from "_macros.html" import ts %}
+{# Workers card deck. Layout "L1": inline Disk SVG ring on the left,
+   panel with RAM/CPU bars + task count on the right, footer with link to the
+   active task and heartbeat. The platform summary OOB travels on every
+   3s poll. #}
+
+{% macro disk_ring(pct, tier, used_mb, total_mb) %}
+{# Inline SVG ring, server-side. NO internal ids (defs/gradient/clipPath)
+   so idiomorph does not collide between cards: the colour goes by class. r=52,
+   stroke starts at the top (rotate -90). #}
+{%- set r = 52 -%}
+{%- set circ = 2 * 3.14159265 * r -%}
+{%- set dash = circ * (pct / 100.0) -%}
+<svg class="disk-ring load-{{ tier }}" viewBox="0 0 120 120" role="img"
+     aria-label="Disk {{ pct }}% used">
+  <circle class="disk-ring-track" cx="60" cy="60" r="{{ r }}" fill="none"
+          stroke-width="10"></circle>
+  <circle class="disk-ring-fill" cx="60" cy="60" r="{{ r }}" fill="none"
+          stroke-width="10" stroke-linecap="round"
+          stroke-dasharray="{{ '%.2f' % dash }} {{ '%.2f' % circ }}"
+          transform="rotate(-90 60 60)"></circle>
+  <text class="disk-ring-pct" x="60" y="56" text-anchor="middle">{{ pct }}%</text>
+  <text class="disk-ring-sub" x="60" y="74" text-anchor="middle">
+    {{ used_mb | mb_human }} / {{ total_mb | mb_human }}
+  </text>
+</svg>
+{% endmacro %}
+
+{% macro micro_bar(label, pct, tier, value, muted=false) %}
+<div class="worker-bar-row">
+  <span class="worker-bar-label">{{ label }}</span>
+  <span class="worker-bar load-{{ tier }}" aria-label="{{ label }} {{ pct }}% used">
+    <span class="worker-bar-fill" data-pct="{{ '%.4f' % (pct / 100) }}"></span>
+  </span>
+  <span class="worker-bar-value{% if muted %} muted{% endif %}">{{ value }}</span>
+</div>
+{% endmacro %}
+
+<span id="workers-platform-summary" class="workers-platform-summary"
+      hx-swap-oob="true">
+  {% if common_platform %}<span class="page-subtitle-sep" aria-hidden="true">·</span>{{ common_platform }}{% endif %}
+</span>
+{% if workers %}
+<ul class="worker-deck-list">
+  {% for w in workers %}
+  {% set ram_pct = usage_pct(w.ram_used_mb, w.ram_mb) %}
+  {% set disk_pct = usage_pct(w.disk_used_mb, w.disk_mb) %}
+  {% set ram_tier = (ram_pct | load_tier) if w.ram_mb else 'none' %}
+  {% set disk_tier = (disk_pct | load_tier) if w.disk_mb else 'none' %}
+  {% set cpu_tier = w.cpu_pct | load_tier %}
+  {# Server-side disk gate. A third state besides online/offline:
+     a worker that is `online` but below the free-disk floor, which holds back new
+     tasks without ceasing to be online. NULL or floor 0.0 (gate off) => not gated. #}
+  {% set gated = claim_min_free_fraction and claim_min_free_fraction > 0
+                 and w.free_disk_fraction is not none
+                 and w.free_disk_fraction < claim_min_free_fraction %}
+  <li class="worker-card worker-status-{{ w.status }}{% if gated %} worker-gated{% endif %}"
+      id="worker-card-{{ w.id }}"
+      data-worker-id="{{ w.id }}">
+
+    <div class="worker-card-grid">
+      <div class="worker-card-ring">
+        {% if w.disk_mb %}
+          {{ disk_ring(disk_pct, disk_tier, w.disk_used_mb, w.disk_mb) }}
+        {% else %}
+          <div class="disk-ring disk-ring-empty" aria-label="Disk unknown">
+            <span class="muted">—</span>
+          </div>
+        {% endif %}
+      </div>
+
+      <div class="worker-card-panel">
+        <header class="worker-card-head">
+          <a class="worker-card-link" href="/admin/workers/{{ w.id }}">
+            <span class="worker-dot worker-dot-{{ w.status }}{% if gated %} worker-dot-gated{% endif %}" aria-hidden="true"></span>
+            <span class="worker-host">{{ w.name or w.hostname }}</span>
+            <span class="worker-card-arrow" aria-hidden="true">›</span>
+          </a>
+          {# Worker control is owner-only (the endpoints answer 403 to members),
+             so members get no actions menu. #}
+          {% if is_owner %}
+          <details class="dropdown row-actions worker-card-kebab" data-keep-open>
+            <summary aria-label="Actions for worker {{ w.name or w.hostname }}">⋮</summary>
+            <ul dir="rtl">
+              {# Pause/Resume above Delete, separated from the destructive
+                 zone (tone warn, not danger: it is reversible). Offline offers nothing:
+                 `pause` requires online and `resume` requires paused, so the POST would
+                 give 409. hx-swap="none" + immediate refresh of the deck, because the
+                 endpoint returns JSON ({"status": ...}): Delete's `hx-swap="outerHTML"`
+                 would paint the raw JSON inside the card.
+
+                 The reason dialog (data-confirm) can remain open over this card
+                 while the deck's 3s poll keeps running in parallel. What keeps that
+                 morph from taking the dialog away is the `id="worker-card-{{ w.id }}"` of
+                 the `<li>` (higher up in this same for): idiomorph matches nodes by
+                 id, so the card stays the SAME DOM element between polls instead of
+                 one removed and a new one created in its place. Whoever removes that id reintroduces
+                 a silent loss of actions: htmx discards, with no event or
+                 error, a request whose source element left the DOM. #}
+              {% if w.status == "online" %}
+              <li>
+                <a href="#"
+                   hx-post="/admin/workers/{{ w.id }}/pause"
+                   hx-swap="none"
+                   hx-confirm="custom" data-confirm
+                   data-confirm-tone="warn"
+                   data-confirm-title="Pause {{ w.name or w.hostname }}?"
+                   data-confirm-message="It stops claiming new tasks. Its {{ w.active_count or 0 }} active execution(s) keep running until they finish."
+                   data-confirm-ok-label="Pause worker"
+                   data-confirm-reason="Reason (optional)"
+                   data-after-request="refresh-workers">Pause</a>
+              </li>
+              {% elif w.status == "paused" %}
+              <li>
+                <a href="#"
+                   hx-post="/admin/workers/{{ w.id }}/resume"
+                   hx-swap="none"
+                   hx-confirm="custom" data-confirm
+                   data-confirm-tone="warn"
+                   data-confirm-title="Resume {{ w.name or w.hostname }}?"
+                   data-confirm-message="It becomes eligible for new tasks again on its next poll."
+                   data-confirm-ok-label="Resume worker"
+                   data-confirm-reason="Reason (optional)"
+                   data-after-request="refresh-workers">Resume</a>
+              </li>
+              {% endif %}
+              {% if w.status == "offline" %}
+              <li>
+                <a href="#" class="danger"
+                   hx-delete="/admin/workers/{{ w.id }}"
+                   hx-confirm="custom" data-confirm
+                   data-confirm-action="delete" data-confirm-tone="danger"
+                   data-confirm-title="Delete worker {{ w.name or w.hostname }}?"
+                   data-confirm-message="Worker is offline ({{ w.id[:8] }}). This cannot be undone."
+                   data-confirm-ok-label="Delete worker"
+                   hx-target="closest .worker-card"
+                   hx-swap="outerHTML swap:200ms">Delete worker</a>
+              </li>
+              {% else %}
+              <li>
+                <a href="#" class="danger"
+                   hx-delete="/admin/workers/{{ w.id }}?force=true"
+                   hx-confirm="custom" data-confirm
+                   data-confirm-action="delete" data-confirm-tone="danger"
+                   data-confirm-title="Force-delete {{ w.name or w.hostname }}?"
+                   data-confirm-message="Worker is {{ w.status }} with {{ w.active_count or 0 }} active execution(s). Deleting will cancel them and remove the worker. This cannot be undone."
+                   data-confirm-ok-label="Force delete"
+                   hx-target="closest .worker-card"
+                   hx-swap="outerHTML swap:200ms">Delete (force)</a>
+              </li>
+              {% endif %}
+            </ul>
+          </details>
+          {% endif %}
+        </header>
+
+        {% if w.status != "online" or gated %}
+        {# Suffix `paused (stale)`: a paused and powered-off worker stays
+           `paused` with a stale heartbeat indefinitely, so for that
+           state the badge no longer indicates connectivity. The dot is NOT touched:
+           it remains status-driven. For `online` with a stale heartbeat no signal
+           is needed: housekeeping moves it to `offline` when the
+           timeout expires. #}
+        {% set _paused_stale = w.status == "paused"
+                               and w.heartbeat_age_seconds is not none
+                               and w.heartbeat_age_seconds > heartbeat_timeout_seconds %}
+        <div class="worker-card-meta">
+          {% if w.status != "online" %}
+          <span class="badge badge-{{ w.status }}"{% if _paused_stale %} title="Paused by an operator; last heartbeat {{ w.heartbeat_age_seconds }}s ago, the host may be down"{% endif %}>{{ w.status }}{% if _paused_stale %} (stale){% endif %}</span>
+          {% endif %}
+          {# Disk gate badge. It does NOT replace `w.status` (which stays
+             `online`): a worker can be `online` and `storage-gated` at the
+             same time, so we show it apart from the status badge. #}
+          {% if gated %}
+          <span class="badge badge-storage-gated" title="Free disk below {{ (claim_min_free_fraction * 100) | round(0, 'floor') | int }}%; not claiming new tasks until it recovers">storage-gated</span>
+          {% endif %}
+          {% if not common_platform %}
+            <span class="worker-osarch">{{ w.os }} · {{ w.arch }}</span>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        <div class="worker-card-bars">
+          {% if w.ram_mb %}
+            {{ micro_bar("RAM", ram_pct, ram_tier, (w.ram_used_mb | mb_human) ~ " / " ~ (w.ram_mb | mb_human)) }}
+          {% else %}
+            {{ micro_bar("RAM", 0, "none", "unknown", muted=true) }}
+          {% endif %}
+          {% if w.cpu_pct is not none %}
+            {{ micro_bar("CPU", w.cpu_pct, cpu_tier, w.cpu_pct ~ "%") }}
+          {% else %}
+            {{ micro_bar("CPU", 0, "none", "—", muted=true) }}
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <footer class="worker-card-foot">
+      <span class="worker-active-task">
+        {% if w.active_task_id %}
+          <a class="worker-active-link" href="/admin/tasks/{{ w.active_task_id }}">#{{ w.active_task_id }}</a>
+        {% elif gated %}
+          {# No active task, but gated by disk: not a healthy idle. #}
+          <span class="worker-storage-gated" title="Free disk below the claim floor; holding off new tasks">storage-gated</span>
+        {% else %}
+          <span class="muted">idle</span>
+        {% endif %}
+      </span>
+      <span class="worker-foot-right">
+        {# Worker version at fleet level. Mirrors the detail
+           (worker_detail.html): `v{version}` or a muted fallback. The operator
+           compares it by eye against the server version in "About". #}
+        {% if w.version %}
+          <code class="worker-card-version" title="Worker version v{{ w.version }}">v{{ w.version }}</code>
+        {% else %}
+          <span class="worker-card-version muted" title="Worker has not reported a version yet">no version reported</span>
+        {% endif %}
+        {# Below the version floor (or with no version) the server does not
+           hand it tasks that use the workspace's stored secrets. #}
+        {% if not w.task_secrets_supported %}
+          <span class="worker-no-secrets" title="Below {{ task_secrets_min_version }}: tasks that use stored secrets are not delivered to this worker">No task secrets</span>
+        {% endif %}
+        <span class="worker-foot-seen">
+          {% if w.last_heartbeat_at %}
+            {{ ts(w.last_heartbeat_at, 'relative', 'rel') }}
+          {% else %}
+            <span class="muted">no heartbeats</span>
+          {% endif %}
+        </span>
+      </span>
+    </footer>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="empty-state empty-state-workers worker-deck-empty">
+  <p class="empty-state-title">No workers registered.</p>
+  <p class="empty-state-hint">Start a worker on a host with:</p>
+  <pre class="empty-state-cmd"><code>make up client</code></pre>
+  <p class="empty-state-hint-muted">It will appear here on first heartbeat.</p>
+</div>
+{% endif %}

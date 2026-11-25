@@ -1,0 +1,13 @@
+{% from "_macros.html" import ts %}
+{% if uses %}
+<ul class="token-uses">
+  {% for u in uses %}
+  <li class="token-use-row">
+    <code>{{ u.worker_id or "—" }}</code>
+    <span class="muted">{{ ts(u.used_at, 'relative') }}</span>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">No enrollment history recorded for this token.</p>
+{% endif %}

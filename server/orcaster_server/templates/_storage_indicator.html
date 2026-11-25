@@ -1,0 +1,60 @@
+{# Server storage chip + quota of the active workspace.
+   Text in English.
+
+   Glanceable inline: Quota used (product decision). Disk free drops to
+   on-demand inside the popover, next to the usage bars of both. The state
+   (warn >=75% / danger >=90%) colours the inline number AND the bar, and is never
+   by colour alone: the number gains weight and the ⚠ badge appears if the workspace
+   was paused because storage is full (non-chromatic cue, accessible to colour blindness).
+
+   The <li> is refreshed with morph:innerHTML so the open popover survives
+   the 30s poll (app.js preserves `open` on .tele-pop). The bars carry inline
+   width (without depending on app.css being cached). #}
+{% import "_macros.html" as macros %}
+{# data-keep-open: app.js (configureIdiomorph) preserves `open` between polls.
+   data-header-popover: app.js (initHeaderDisclosures / SEL) closes it on
+   Escape/click-outside because it is a floating header popover. The contract
+   lives in app.js. #}
+<details class="tele-pop storage-pop" data-keep-open data-header-popover>
+  {# aria-label names the whole chip; the open/closed state comes from the
+     native <details> (do not bake "Open for..." into the text: it would go stale
+     once opened). No visually-hidden <span> here: the aria-label wins as the
+     accessible name and would override it, announcing twice. #}
+  <summary class="tele-summary"
+           aria-label="Quota: {{ ws_used_mb | mb_human }} of {{ ws_quota_mb | mb_human }} used{% if paused %}, storage full{% endif %}"
+           title="Artifact storage">
+    <span class="tele-metric{{ macros.severity_class(quota_pct) }}">
+      <svg class="tele-icon" viewBox="0 0 16 16" aria-hidden="true" fill-rule="evenodd">
+        <path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Zm0 2a4.5 4.5 0 0 1 0 9 4.5 4.5 0 0 1 0-9Z"/>
+        <path d="M8 8V3.5A4.5 4.5 0 0 1 11.9 10.25Z"/>
+      </svg>
+      <span class="tele-num">{{ ws_used_mb | mb_human }} / {{ ws_quota_mb | mb_human }}</span>
+    </span>
+    {% if paused %}<span class="storage-badge" role="status">&#9888; storage full</span>{% endif %}
+    <span class="tele-caret" aria-hidden="true">&#9662;</span>
+  </summary>
+  <div class="tele-pop-body" role="group" aria-label="Storage detail">
+    <div class="tele-row tele-row--bar{{ macros.severity_class(quota_pct) }}">
+      <span class="tele-row-label">Quota</span>
+      <span class="tele-row-val">{{ ws_used_mb | mb_human }} / {{ ws_quota_mb | mb_human }}</span>
+      <span class="storage-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+            aria-valuenow="{{ quota_pct }}" aria-label="Quota usage">
+        <span class="storage-bar-fill" data-w="{{ quota_pct }}"></span>
+      </span>
+    </div>
+    {# Origin of the effective quota: workspace override set by the
+       host, or the server default. Read-only: the UI does not change it. #}
+    <div class="tele-row">
+      <span class="tele-row-label">Quota source</span>
+      <span class="tele-row-val">{% if ws_quota_overridden %}Workspace override{% else %}Server default{% endif %}</span>
+    </div>
+    <div class="tele-row tele-row--bar{{ macros.severity_class(disk_pct) }}">
+      <span class="tele-row-label">Disk free</span>
+      <span class="tele-row-val">{{ disk_free_mb | mb_human }}</span>
+      <span class="storage-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+            aria-valuenow="{{ disk_pct }}" aria-label="Disk usage">
+        <span class="storage-bar-fill" data-w="{{ disk_pct }}"></span>
+      </span>
+    </div>
+  </div>
+</details>

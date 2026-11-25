@@ -1,0 +1,9 @@
+# Build artifacts
+build/
+dist/
+*.spec.bak
+
+# Archivos que run-fleet.sh estampa por worker con el token de enrolamiento y el bloque
+# EXTRA_ENV completo. Clase de digitos para no capturar .env.example, que sigue
+# versionado como plantilla.
+.env.[0-9]*

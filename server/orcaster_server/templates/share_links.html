@@ -1,0 +1,95 @@
+{% from "_macros.html" import ts %}
+{% extends "base.html" %}
+{% block title %}Share links &middot; Orcaster{% endblock %}
+{% block content %}
+<section class="share-links">
+  <h1>Share links</h1>
+  <p>
+    A share link gives a client a read-only public status page for this
+    workspace, with no login. Revoke a link to cut access immediately.
+  </p>
+
+  {% if not urls_recoverable %}
+  <p class="share-keys-notice" role="note">
+    This server has no encryption keys configured (<code>TASK_SECRETS_KEYS_PATH</code>),
+    so a link's URL is shown only once, right after creating it, and cannot be
+    recovered later.
+  </p>
+  {% endif %}
+
+  {% if share_token %}
+  <div class="share-reveal" role="status">
+    {% if urls_recoverable %}
+    <p><strong>Link created.</strong> Its URL also stays available in the table below:</p>
+    {% else %}
+    <p><strong>Link created.</strong> Copy it now; it is shown only once:</p>
+    {% endif %}
+    <code id="share-token-secret">{{ share_token }}</code>
+    <p class="share-url-hint">{{ base_url }}/status/{{ share_token }}
+      <button type="button" class="copy-btn" data-copy="{{ base_url }}/status/{{ share_token }}"
+              aria-label="Copy share link URL">
+        <span class="copy-btn-icon" aria-hidden="true">⧉</span>
+        <span class="copy-btn-feedback" aria-live="polite"></span>
+      </button>
+    </p>
+  </div>
+  {% endif %}
+
+  <form method="post" action="/admin/share-links" class="share-mint-form">
+    <input type="text" name="label" placeholder="Label (e.g. Acme Corp)" maxlength="120">
+    <button type="submit">Create share link</button>
+  </form>
+
+  {% if tokens %}{% include "_tz_note.html" %}{% endif %}
+  <table class="share-table">
+    <thead>
+      <tr><th>Label</th><th>URL</th><th>Created</th><th>Last seen</th><th>Status</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for t in tokens %}
+      <tr>
+        <td>{{ t.label or "—" }}</td>
+        <td class="share-url-cell">
+          {% if t.url_state == "available" %}
+          <code>{{ base_url }}/status/{{ t.url_token }}</code>
+          <button type="button" class="copy-btn" data-copy="{{ base_url }}/status/{{ t.url_token }}"
+                  aria-label="Copy share link URL">
+            <span class="copy-btn-icon" aria-hidden="true">⧉</span>
+            <span class="copy-btn-feedback" aria-live="polite"></span>
+          </button>
+          {% elif t.url_state == "revoked" %}
+          —
+          {% elif t.url_state == "keys_missing" %}
+          URL not recoverable: encryption keys are not configured on this server
+          {% elif t.url_state == "undecryptable" %}
+          URL not decryptable with the configured keys; mint a new link
+          {% else %}
+          URL not recoverable; mint a new link
+          {% endif %}
+        </td>
+        <td>{{ ts(t.created_at, 'datetime') }}</td>
+        <td>{% if t.last_seen_at %}{{ ts(t.last_seen_at, 'datetime') }}{% else %}never{% endif %}</td>
+        <td>{% if t.revoked_at %}revoked{% else %}active{% endif %}</td>
+        <td>
+          {% if not t.revoked_at %}
+          <form method="post" action="/admin/share-links/{{ t.id }}/revoke">
+            <button type="submit" class="btn-danger"
+                    data-confirm
+                    data-confirm-tone="danger"
+                    data-confirm-title="Revoke share link?"
+                    data-confirm-message="The client using this link loses access to the status page immediately. This cannot be undone."
+                    data-confirm-ok-label="Revoke link"
+                    data-confirm-url="/admin/share-links/{{ t.id }}/revoke"
+                    data-confirm-method="POST"
+                    data-confirm-after="reload">Revoke</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6">No share links yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

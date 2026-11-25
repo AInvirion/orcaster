@@ -1,0 +1,233 @@
+/* auth.css — styles of the auth module (login, invitation, passkeys).
+ *
+ * SELF-CONTAINED ON PURPOSE: the auth module is meant to be
+ * reusable in other projects, so this file does NOT depend on
+ * app.css or its tokens. It defines its own :root (a subset
+ * consistent with the dashboard's "Pewter" palette) so that the auth
+ * pages look right even when mounted in a project without app.css.
+ *
+ * Light theme by default; dark automatic via prefers-color-scheme.
+ * Progressive enhancement: fallback (hex) first, oklch after.
+ */
+
+:root {
+  /* fallback first, oklch after (old browsers ignore the 2nd).
+     Neumorphism: bg and surface share ONE tone; depth is carried by the
+     dual shadow, not by fill contrast. Mirror of the app.css palette. */
+  --neu-surface:   #e9f0f2;
+  --neu-surface:   oklch(95% 0.008 220);
+  --bg:            #e9f0f2;
+  --bg:            var(--neu-surface);
+  --surface:       #e9f0f2;
+  --surface:       var(--neu-surface);
+  --border:        #dae3e6;
+  --border:        oklch(91% 0.010 220);
+  --border-strong: #6e7d83;
+  --border-strong: oklch(58% 0.020 220);
+  --text:          #2a2f36;
+  --text:          oklch(22% 0.018 220);
+  --text-muted:    #6b7480;
+  --text-muted:    oklch(50% 0.013 220);
+
+  --accent:        #1c8696;
+  --accent:        oklch(54% 0.13 195);
+  --accent-hover:  #186f7d;
+  --accent-hover:  oklch(48% 0.14 195);
+  --accent-fg:     #f3fcfd;
+  --accent-fg:     oklch(98% 0.01 195);
+  --focus-ring:    rgba(45, 178, 196, 0.45);
+  --focus-ring:    oklch(70% 0.15 195 / 0.45);
+
+  --danger-fg:     #b23b2e;
+  --danger-fg:     oklch(45% 0.18 25);
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+               Roboto, Helvetica, Arial, sans-serif;
+
+  --radius:    8px;
+  --radius-lg: 14px;
+
+  /* Neumorphism: dual shadow (highlight top-left + soft grey bottom-right);
+     inset for the sunken state (fields). No pure black, no gradient. */
+  --shadow:
+     -2px -2px 4px rgba(249, 252, 254, 0.70),
+      2px  2px 4px rgba(164, 180, 186, 0.35);
+  --shadow:
+     -2px -2px 4px oklch(99% 0.004 220 / 0.70),
+      2px  2px 4px oklch(76% 0.020 220 / 0.35);
+  --shadow-lg:
+     -8px -8px 18px rgba(249, 252, 254, 0.85),
+     10px 10px 24px rgba(164, 180, 186, 0.45);
+  --shadow-lg:
+     -8px -8px 18px oklch(99% 0.004 220 / 0.85),
+     10px 10px 24px oklch(76% 0.020 220 / 0.45);
+  --shadow-inset:
+     inset  3px  3px 6px rgba(164, 180, 186, 0.45),
+     inset -3px -3px 6px rgba(249, 252, 254, 0.75);
+  --shadow-inset:
+     inset  3px  3px 6px oklch(76% 0.020 220 / 0.45),
+     inset -3px -3px 6px oklch(99% 0.004 220 / 0.75);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --neu-surface:  #141c1f;
+    --neu-surface:  oklch(22% 0.013 220);
+    --bg:           #141c1f;
+    --bg:           var(--neu-surface);
+    --surface:      #141c1f;
+    --surface:      var(--neu-surface);
+    --border:       #202b2e;
+    --border:       oklch(28% 0.016 220);
+    --border-strong:#65757a;
+    --border-strong:oklch(55% 0.020 220);
+    --text:         #e6eaef;
+    --text:         oklch(92% 0.011 220);
+    --text-muted:   #97a1ad;
+    --text-muted:   oklch(68% 0.013 220);
+
+    --accent:       #35b0c0;
+    --accent:       oklch(68% 0.12 195);
+    --accent-hover: #4cc0cf;
+    --accent-hover: oklch(74% 0.12 195);
+    --accent-fg:    #0c1416;
+    --accent-fg:    oklch(18% 0.02 195);
+
+    --danger-fg:    #e88b7f;
+    --danger-fg:    oklch(72% 0.13 25);
+
+    /* Dark neumorphism: lighter highlight top-left, near-pure black bottom-right. */
+    --shadow:
+       -2px -2px 4px rgba(42, 53, 57, 0.50),
+        2px  2px 4px rgba(1, 2, 2, 0.50);
+    --shadow:
+       -2px -2px 4px oklch(32% 0.016 220 / 0.50),
+        2px  2px 4px oklch(8% 0.006 220 / 0.50);
+    --shadow-lg:
+       -8px -8px 18px rgba(42, 53, 57, 0.50),
+       10px 10px 24px rgba(1, 2, 2, 0.62);
+    --shadow-lg:
+       -8px -8px 18px oklch(32% 0.016 220 / 0.50),
+       10px 10px 24px oklch(8% 0.006 220 / 0.62);
+    --shadow-inset:
+       inset  3px  3px 6px rgba(1, 2, 2, 0.55),
+       inset -3px -3px 6px rgba(42, 53, 57, 0.45);
+    --shadow-inset:
+       inset  3px  3px 6px oklch(8% 0.006 220 / 0.55),
+       inset -3px -3px 6px oklch(32% 0.016 220 / 0.45);
+  }
+}
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+main {
+  width: 100%;
+  max-width: 24rem;
+  padding: 2.25rem 2rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+h1 {
+  margin: 0 0 1.25rem;
+  font-size: 1.4rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+p {
+  margin: 0 0 1rem;
+  color: var(--text-muted);
+}
+
+label {
+  display: block;
+  margin-bottom: 1rem;
+  font-weight: 550;
+  color: var(--text);
+}
+
+input {
+  display: block;
+  width: 100%;
+  margin-top: 0.4rem;
+  padding: 0.6rem 0.7rem;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  /* Neumorphism: sunken well (inset); --border-strong keeps the field
+     boundary at >=3:1 against the base (WCAG 1.4.11). */
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-inset);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  /* The well stays and the accent focus ring appears on top. */
+  box-shadow: var(--shadow-inset), 0 0 0 3px var(--focus-ring);
+}
+
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 0.65rem 1rem;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent-fg);
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+  /* Neumorphism: extruded capsule at rest, sunken when pressed. */
+  box-shadow: var(--shadow);
+  transition: background-color 0.15s ease, box-shadow 0.15s ease,
+              transform 0.05s ease;
+}
+
+button:hover  { background: var(--accent-hover); box-shadow: var(--shadow-lg); }
+button:active { transform: translateY(1px); box-shadow: var(--shadow-inset); }
+
+button:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow), 0 0 0 3px var(--focus-ring);
+}
+
+/* Status message (role="status"). Empty by default, filled via JS. */
+#msg {
+  margin: 1rem 0 0;
+  min-height: 1.4em;
+  font-size: 0.85rem;
+  color: var(--danger-fg);
+}
+
+#msg:empty { margin-top: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  input, button { transition: none; }
+}

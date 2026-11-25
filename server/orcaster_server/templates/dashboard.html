@@ -1,0 +1,334 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Orcaster{% endblock %}
+{% block body_class %}dashboard-body{% endblock %}
+{% block content %}
+<!-- hx-ext="morph" enables idiomorph for the two panels that poll every
+     3s. With morph:innerHTML, instead of replacing the subtree, idiomorph
+     diffs against the server HTML preserving node identity
+     (matching by row id + id-set). This keeps <details open>,
+     scroll, focus and .task-highlight between polls; without it, the
+     innerHTML swap every 3s destroys live UI state (kebabs closed,
+     scroll jumped to the top). See app.js for details on how `open` and
+     `task-highlight` are preserved via callbacks. -->
+<div class="dashboard-shell" hx-ext="morph">
+  <aside class="workers-pane" aria-label="Workers">
+    <div class="workers-pane-head">
+      <h2>Workers
+        {# Optional subtitle with the fleet's common platform. Rendered OOB
+           from _workers_deck.html on every poll: empty if the fleet is
+           heterogeneous, "· linux · aarch64" if all match. #}
+        <span id="workers-platform-summary" class="workers-platform-summary"></span>
+      </h2>
+    </div>
+    {# `refresh` in the hx-trigger: the kebab Pause/Resume items fire it
+       with htmx.trigger so the deck reflects the change without waiting for
+       the 3s tick. Same pattern as #tasks-panel. #}
+    <div class="workers-pane-body"
+         aria-live="polite"
+         hx-get="/admin/workers"
+         hx-trigger="load, every 3s, refresh"
+         hx-swap="morph:innerHTML">
+      <p class="muted">Loading workers...</p>
+    </div>
+  </aside>
+
+  <section class="tasks-pane" aria-label="Tasks">
+    {# Single pane toolbar: merges the former `.tasks-pane-head` (h1 + subtitle
+       + CTA) with the former `.filter-bar` (chips + search) into one shared
+       grid toolbar (heading + CTA in row 1; filter rail and advanced row,
+       full-width, below). Recovers ~50px of height at 1440x900
+       versus the original three-rail stack. The <form> remains the
+       container of the filters to preserve the HTMX contract
+       (#filter-form as hx-include of #tasks-panel + hx-trigger="submit");
+       heading and CTA stay outside the form. #}
+    <div class="tasks-pane-toolbar tasks-pane-head">
+      <div class="page-heading">
+        <h1 class="page-title">Tasks</h1>
+        {# Visible polling-state indicator. Mirrors the dashTasksIdle()
+           predicate: "Live" while auto-refresh runs, "Paused"
+           while the user interacts with the list. The state is driven by
+           app.js (syncPollIndicator) through data-state; the title explains
+           the pause. app.js adds role=status (=> aria-live) after the first
+           sample, so the initial state does not trigger a spurious announcement. #}
+        <span class="poll-status" id="poll-status" data-state="live"
+              title="Auto-refresh pauses while you interact with the list. Move the pointer away to resume.">
+          <span class="status-dot poll-status-dot" aria-hidden="true"></span>
+          <span class="poll-status-label">Live</span>
+        </span>
+        {# Subtitle with the inline counter. Updated via hx-swap-oob
+           from `_tasks_table.html` on every poll/filter so the header and
+           the table never disagree. Rendered server-side in the HTMX swap; on
+           first paint it is empty and appears after the first response of the
+           3s polling (typically <50ms). #}
+        <span class="page-subtitle" id="tasks-subtitle" aria-live="polite"></span>
+      </div>
+
+      <!-- Table filters. The form lives inline in the toolbar; the
+           #tasks-panel still does hx-include="#filter-form" so the
+           polling carries the current params on every tick. The status
+           chips are <button aria-pressed> (not checkboxes) for clear
+           visual-toggle semantics; a hidden input accumulates the CSV that
+           the form sends. -->
+      <form id="filter-form" class="filter-bar" autocomplete="off"
+            role="search" aria-label="Filter tasks"
+            hx-get="/admin/tasks"
+            hx-target="#tasks-panel"
+            hx-swap="morph:innerHTML"
+            hx-trigger="submit">
+        {# Main filter rail: variant select · status chips ·
+           artifacts trigger · search. The form uses display:contents (see
+           .tasks-pane-toolbar in app.css), so this wrapper and
+           .filter-artifacts-row are direct grid items of the toolbar: the
+           rail spans the full toolbar width in row 2 and the advanced row
+           does the same in row 3. #}
+        <div class="filter-bar-main">
+        {# Version lens: the highest-level scope of the dashboard.
+           It re-scales the listing AND the subtitle's count gauge. It lives
+           INSIDE #filter-form so the 3-5s poll (hx-include) carries the
+           variant on every tick; outside, each poll would reset to current.
+           HTMX pattern identical to #filter-artifacts. Default "Current" = latest
+           of each tool + other. `data-off-current` marks (subtly, via CSS)
+           when you are NOT on the live version; app.js re-syncs it on change. #}
+        <label for="filter-variant" class="visually-hidden">Version</label>
+        <select id="filter-variant" name="variant" class="filter-variant-select"
+                data-off-current="{{ 'true' if selected_variant not in ('', 'current') else 'false' }}"
+                hx-get="/admin/tasks"
+                hx-target="#tasks-panel"
+                hx-swap="morph:innerHTML"
+                hx-trigger="change"
+                hx-include="#filter-form"
+                title="Scope the dashboard to a tool version. Default shows the current (latest) version of each tool.">
+          {% include "_variant_options.html" %}
+        </select>
+        <span class="filter-divider" aria-hidden="true"></span>
+        <div class="status-chips-wrap" id="status-chips-wrap"
+             role="group" aria-label="Filter by status">
+          <button type="button" class="status-chip status-chip--all"
+                  aria-pressed="true" data-status=""
+                  title="Show tasks in any status">
+            All
+          </button>
+          <button type="button" class="status-chip"
+                  aria-pressed="false" data-status="queued"
+                  title="{{ status_tooltips['queued'] }}">queued</button>
+          <button type="button" class="status-chip"
+                  aria-pressed="false" data-status="dispatching"
+                  title="{{ status_tooltips['dispatching'] }}">dispatching</button>
+          <button type="button" class="status-chip"
+                  aria-pressed="false" data-status="paused"
+                  title="{{ status_tooltips['paused'] }}">paused</button>
+          <button type="button" class="status-chip"
+                  aria-pressed="false" data-status="completed"
+                  title="{{ status_tooltips['completed'] }}">completed</button>
+          <button type="button" class="status-chip"
+                  aria-pressed="false" data-status="cancelled"
+                  title="{{ status_tooltips['cancelled'] }}">cancelled</button>
+          <button type="button" class="status-chip"
+                  aria-pressed="false" data-status="failed"
+                  title="{{ status_tooltips['failed'] }}">failed</button>
+          {# Dynamic outcome chips: one for each outcome actually
+             present in the workspace (`outcome_chips`, computed by
+             `admin_index` from `tasks.outcome`). There is no fixed
+             list — a new outcome declared by a task shows up by itself,
+             without touching this template.
+             The count in the title is that of the current LENS, not of a
+             single version: under `All versions` it sums all of them and under
+             `current` it sums the current one of each tool. That is why it
+             says plain "task(s)" — "in this version" would be false in every
+             mode except `pair`. #}
+          {% for oc in outcome_chips %}
+          <button type="button" class="status-chip status-chip--outcome"
+                  aria-pressed="false" data-outcome="{{ oc.name }}"
+                  title="Tasks whose terminal outcome is '{{ oc.name }}' ({{ oc.count }} task{{ '' if oc.count == 1 else 's' }})">{{ oc.name }}</button>
+          {% endfor %}
+          {# Clamp disclosure. The chip vocabulary grows at
+             runtime (7 fixed statuses + up to 20 outcomes present) and with no
+             ceiling it ate the viewport: measured, 20 outcomes gave a 566px
+             toolbar at 390x844, with the whole table below the fold. app.js
+             limits the block to --chip-lines lines by hiding outcome chips from
+             the end (the server orders them by frequency, so what is hidden
+             is the long tail) and publishes here how many remain.
+             It starts hidden and without a count: without JS there is no clamp
+             and all chips are visible — degrading to the behaviour before the
+             clamp, never to clipped filters with no affordance. #}
+          <button type="button" id="chip-overflow-toggle"
+                  class="filter-disclosure chip-overflow" hidden
+                  aria-expanded="false" aria-controls="status-chips-wrap"
+                  title="Show the outcome filters that don't fit">
+            <span class="chip-overflow-label"></span>
+          </button>
+        </div>
+        <input type="hidden" name="status" id="filter-status-val" value="">
+        <input type="hidden" name="outcome" id="filter-outcome-val" value="">
+        {# Sort persistence: these hidden inputs travel on every 3s poll via
+           hx-include="#filter-form", so the table keeps the current order
+           between ticks. JS syncs them when a sortable header is clicked. #}
+        <input type="hidden" name="sort" id="filter-sort-val" value="created_at">
+        <input type="hidden" name="dir"  id="filter-dir-val"  value="desc">
+        {# Pagination persistence: page and page_size travel on every poll via
+           hx-include="#filter-form", like sort/dir. app.js syncs them
+           when navigating Prev/Next or changing the page-size selector. #}
+        <input type="hidden" name="page"      id="filter-page-val"      value="1">
+        <input type="hidden" name="page_size" id="filter-page-size-val" value="50">
+
+        {# Trigger of the artifact filters. The 4 controls
+           are occasional drill-down, not everyday operation: expanded
+           they overflowed the toolbar's single rail even at 2000px (stretched
+           select + group split into two misaligned rows). They live behind
+           progressive disclosure — the same pattern as details.advanced in the
+           modal. app.js toggles hidden/aria-expanded, paints the active
+           filter counter and auto-opens the row on deep links. #}
+        <span class="filter-divider" aria-hidden="true"></span>
+        <button type="button" id="filter-artifacts-toggle"
+                class="filter-disclosure"
+                aria-expanded="false" aria-controls="filter-artifacts-row"
+                title="Filter tasks by produced artifacts">
+          artifacts<span class="filter-disclosure-count" id="filter-artifacts-count"></span>
+        </button>
+
+        <div class="filter-search-wrap">
+          <label for="filter-q" class="visually-hidden">Search</label>
+          <input type="search" id="filter-q" name="q" value=""
+                 placeholder="payload, #id  /"
+                 class="filter-search"
+                 hx-get="/admin/tasks"
+                 hx-target="#tasks-panel"
+                 hx-swap="morph:innerHTML"
+                 hx-trigger="input changed delay:300ms, search"
+                 hx-include="#filter-form">
+        </div>
+        </div>
+
+        {# Advanced row of artifact filters: full-width below the main
+           rail (the form uses display:contents, so this row is a direct grid
+           item of the toolbar; grid-column: 1 / -1 makes it span the full
+           width of the 2-column toolbar, in row 3). It stays INSIDE
+           #filter-form: the hx-include contract of polls/sort/pagination
+           does not change, and the values travel even with the row collapsed
+           (display:none does not exclude inputs from the submit). Each control
+           has a visible label — the placeholder is an example again, not a label.
+           app.js resets page→1 on change, disables path/type/sha with
+           "Without artifacts" and restores state from the URL on deep links.
+           The content-type <datalist> lives in _tasks_table.html. #}
+        <div class="filter-artifacts-row" id="filter-artifacts-row" hidden
+             role="group" aria-label="Filter by artifact">
+          <div class="filter-field">
+            <label class="filter-field-label" for="filter-artifacts">Has artifacts</label>
+            <select id="filter-artifacts" name="has_artifacts"
+                    class="filter-artifacts-select"
+                    hx-get="/admin/tasks"
+                    hx-target="#tasks-panel"
+                    hx-swap="morph:innerHTML"
+                    hx-trigger="change"
+                    hx-include="#filter-form"
+                    title="Filter tasks by whether they produced artifacts">
+              <option value="any" selected>Any</option>
+              <option value="yes">With artifacts</option>
+              <option value="no">Without artifacts</option>
+            </select>
+          </div>
+
+          <div class="filter-field">
+            <label class="filter-field-label" for="filter-artifact-path">Path glob</label>
+            <input type="search" id="filter-artifact-path" name="artifact_path"
+                   class="filter-artifact-input"
+                   value=""
+                   placeholder="qwen2.5-*.json"
+                   hx-get="/admin/tasks"
+                   hx-target="#tasks-panel"
+                   hx-swap="morph:innerHTML"
+                   hx-trigger="input changed delay:300ms, search"
+                   hx-include="#filter-form"
+                   title="Match the full artifact rel_path with a glob (* and ?)">
+          </div>
+
+          <div class="filter-field">
+            <label class="filter-field-label" for="filter-artifact-type">Content type</label>
+            <input type="search" id="filter-artifact-type" name="artifact_type"
+                   class="filter-artifact-input"
+                   value=""
+                   placeholder="application/json"
+                   list="artifact-types-list"
+                   hx-get="/admin/tasks"
+                   hx-target="#tasks-panel"
+                   hx-swap="morph:innerHTML"
+                   hx-trigger="input changed delay:300ms, search"
+                   hx-include="#filter-form"
+                   title="Exact MIME content-type match">
+          </div>
+
+          <div class="filter-field">
+            <label class="filter-field-label" for="filter-artifact-sha">SHA-256</label>
+            <input type="search" id="filter-artifact-sha" name="artifact_sha256"
+                   class="filter-artifact-input"
+                   value=""
+                   placeholder="hash or prefix"
+                   hx-get="/admin/tasks"
+                   hx-target="#tasks-panel"
+                   hx-swap="morph:innerHTML"
+                   hx-trigger="input changed delay:300ms, search"
+                   hx-include="#filter-form"
+                   title="Match by sha256 (exact hash or prefix)">
+          </div>
+        </div>
+      </form>
+
+      <button id="open-new-task-btn" type="button" data-open-new-task>
+        + New task <kbd class="btn-kbd-hint" aria-hidden="true">n</kbd>
+      </button>
+    </div>
+
+    {# Progress bar slot. It starts empty and is filled via
+       hx-swap-oob from `_tasks_table.html` on every poll/filter of the
+       #tasks-panel, like #tasks-subtitle. It lives outside the panel so it
+       sits between the toolbar and the table without re-rendering the toolbar. #}
+    <div id="tasks-progress" class="tasks-progress"></div>
+
+    {# bulk-bar: floating action bar (position:fixed, centered at the bottom edge
+       of the viewport) — see app.css. Being fixed, its place in the DOM does
+       not affect the layout; it lives here because of its proximity to the
+       #tasks-panel that feeds it. At rest it carries `.hidden` (the server
+       renders it inactive; fallback if JS does not run). JS only toggles
+       `.hidden` according to the selection size; the fade/slide lives in CSS. #}
+    <div class="bulk-bar hidden" id="bulk-bar" role="toolbar" aria-label="Bulk actions" aria-hidden="true">
+      <span>Selected: <strong id="bulk-count">0</strong></span>
+      <button id="bulk-retry-btn" type="button" class="btn-secondary">Retry selected</button>
+      <button id="bulk-cancel-btn" type="button" class="btn-secondary">Cancel selected</button>
+      <button id="bulk-delete-btn" type="button" class="btn-secondary">Delete selected</button>
+      <span id="bulk-result" class="muted"></span>
+    </div>
+    {# Time zone note of the tasks pane (Runtime column). It lives in the
+       shell, outside #tasks-panel, so it is not re-rendered on every poll. #}
+    {% include "_tz_note.html" %}
+    <div id="tasks-panel"
+         hx-get="/admin/tasks"
+         hx-trigger="load, refresh"
+         hx-swap="morph:innerHTML"
+         hx-include="#filter-form">
+      <p class="muted">Loading tasks...</p>
+    </div>
+  </section>
+
+  {# Permanent affordance to discover the `?` shortcut. Fixed button,
+     bottom-right, subtle. Click → opens the cheatsheet (same handler as `?`). #}
+  <button type="button" id="kbd-toggle" class="kbd-toggle"
+          aria-label="Show keyboard shortcuts" title="Keyboard shortcuts (?)">?</button>
+
+  <aside id="kbd-cheatsheet" class="kbd-cheatsheet" hidden role="dialog" aria-label="Keyboard shortcuts">
+    <header>
+      <strong>Shortcuts</strong>
+      <button type="button" class="kbd-cheatsheet-close" aria-label="Close">×</button>
+    </header>
+    <dl>
+      <dt><kbd>/</kbd></dt><dd>Focus search</dd>
+      <dt><kbd>n</kbd></dt><dd>New task</dd>
+      <dt><kbd>g</kbd> <kbd>w</kbd></dt><dd>Go to workers</dd>
+      <dt><kbd>g</kbd> <kbd>t</kbd></dt><dd>Go to tasks</dd>
+      <dt><kbd>?</kbd></dt><dd>Toggle this panel</dd>
+      <dt><kbd>Esc</kbd></dt><dd>Close panel / modal</dd>
+    </dl>
+  </aside>
+</div>
+
+{% include "_new_task_modal.html" %}
+{% endblock %}

@@ -1,0 +1,9 @@
+{# Execution status line. In the polling fragment it is injected with
+   hx-swap-oob to refresh the status/exit_code when the task reaches
+   terminal (set `oob=true`). UI in English. -#}
+<p id="exec-output-status" class="muted"{% if oob %} hx-swap-oob="true"{% endif %}>
+  task=#{{ task_id }} &middot; worker=<code>{{ worker_id }}</code> &middot;
+  status=<span class="badge badge-{{ execution.status }}">{{ execution.status }}</span>
+  {% if live %}&middot; <span class="live-dot" title="auto-refreshing">&#9679; live</span>{% endif %}
+  &middot; exit_code={{ execution.exit_code if execution.exit_code is not none else "-" }}
+</p>

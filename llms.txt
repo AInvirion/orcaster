@@ -1,0 +1,138 @@
+# Orcaster
+
+> Orcaster, an orchestrator for distributed tasks. A central server queues shell batches and dispatches them to a fleet of workers. Every task runs in an isolated, ephemeral Python environment on one or more workers. AI agents and scripts operate one workspace through the JSON API under `/api/v1`, authenticated with a Personal Access Token (PAT), or through the `orcaster` CLI that wraps the same API.
+
+This file is written for an AI agent that must create, inspect, diagnose or clean up tasks on behalf of a human operator. It describes the system from the user's side only: how to authenticate, what to send, what comes back, and how to act safely. Everything an agent needs is summarized below. The live OpenAPI document is the authoritative schema.
+
+## Connection and authentication
+
+- Production base URL: `https://orcaster.example.com` (a placeholder; get the real value from the human operator, or read it from `$ORCASTER_HOST` when the CLI is already configured). Health check: `GET /healthz`, no credentials. Machine-readable schema: `GET /openapi.json`. Swagger UI: `GET /docs`. ReDoc: `GET /redoc`. Those three routes are not anonymous: `GET /openapi.json` accepts `Authorization: Bearer orcaster_pat_<secret>` (or a dashboard session cookie) and answers `401` without credentials; the browser pages `/docs` and `/redoc` need the dashboard session, which a PAT does not give you, and redirect to the login page without it.
+- Every `/api/v1` request carries `Authorization: Bearer orcaster_pat_<secret>`. Send it only in that header, never in a URL, a log or a task payload.
+- One PAT is bound to exactly one workspace. It inherits the current role (`owner` or `member`) of the user who issued it. A user with several workspaces needs one PAT per workspace.
+- A human issues the PAT in the dashboard under the `Tokens` nav entry (`/admin/pats`), on the page titled Personal access tokens. The secret is shown once. It can carry an optional expiry. An expired or revoked PAT returns `401`.
+- Start every session with `GET /api/v1/auth/whoami`. The response is `{user, workspace, role, token}`. It confirms the token, the workspace slug and the role before any write.
+- Responses are JSON and never redirect to a login page, unlike `/admin`. The exceptions to JSON are the two output routes (gzip attachments) and `DELETE` (`204`, empty body). Errors use one shape: `{"error": "<code>", "message": "<human text>"}`, where `error` is derived from the status (`bad_request`, `unauthorized`, `forbidden`, `not_found`, `conflict`, `unprocessable_entity`, `service_unavailable`), except where a route documents its own code (`task_secrets_unconfigured`). Body and query validation failures return `422` with a third field, `detail`, an array with the offending fields; their `message` is always the constant `request validation failed`, so read `detail`. A `422` raised by a handler carries its text in `message` and has no `detail`. Unknown body fields are rejected with `422` on create, fork, cancel and retry; `POST /tasks/bulk/delete` ignores them silently.
+- `404` also covers resources that exist in another workspace. The API never reveals cross-workspace existence. One nuance: an `idempotency_key` already used in another workspace returns a generic `409`.
+- No rate limit is documented or enforced for `/api/v1`. Use cursor pagination and the maximum `limit` instead of tight polling loops.
+
+## Time and pagination conventions
+
+- All timestamps are ISO 8601 in UTC. An insight date filter without an offset is read as UTC. `run_at` on create is not normalized, so always send it with an explicit offset (`Z`).
+- `GET /tasks` and `GET /tasks/{id}/children` return `{"tasks": [...], "next_cursor": <int|null>}`. `limit` accepts 1 to 200 (default 50). Pass the returned `next_cursor` as `cursor` to fetch the next page. `null` means the list is exhausted. A non-null `next_cursor` only means the page came back full, so a last page of exactly `limit` rows still returns one and the next request comes back empty. Order is task id descending. `GET /insights/signature/tasks` uses another envelope, `{"task_ids": [...], "next_after": <int|null>}`, with `limit` 1 to 1000 (default 500).
+- Insight endpoints default `since` to midnight UTC of the current day. Pass an old explicit `since` to cover the full history.
+
+## Endpoints under /api/v1
+
+- `GET /auth/whoami`. Identity of the PAT.
+- `POST /tasks`. Create a task. Body fields, all optional: `payload` (object, see contract below), `target` (string, default `"1"`), `eligibility` (object, send `{}`), `claim_timeout_seconds` (int, minimum 1, seconds a worker has to claim; omitted means the server default applies, 3600 s, so the claim always expires), `execution_timeout_seconds` (int, minimum 1, total wall-clock cap for the whole batch; omitted means no cap), `run_at` (ISO 8601, earliest eligible time), `priority` (int, default 0, higher runs first), `idempotency_key` (canonical hyphenated UUID, any other form is `422`), `auto_retry` (object, see below). Response `201`: `{task_id, status, target, target_mode, target_count, parent_task_id}`, with `parent_task_id` null on create.
+- `GET /tasks`. Query: `status` (repeatable: `queued`, `dispatching`, `paused`, `completed`, `cancelled`, `failed`), `limit`, `cursor`, `variant`, `include_payload` (bool, adds `payload` to each row). `variant` accepts `all` (default), `other`, `<kind>` or `<kind>~<label>`. An unknown `<kind>` returns `422`. The known kinds are the ones registered by the server's plugins; on a server without plugins every task is `other` and any explicit `<kind>` returns `422`. `variant=current` returns `422`.
+- `GET /tasks/{task_id}`. Full detail with `executions` list, `child_count`, `last_error`, `cancelled_reason`, `outcome`. Output is not inline.
+- `GET /tasks/{task_id}/children`. Direct forks of a task, one level only. Same pagination envelope.
+- `GET /tasks/{task_id}/output`. Query: `format` (`text` default, or `jsonl`), `attempt` (int, 1-based, default latest). Returns a gzip attachment. Empty `200` means no output yet, not an error. An explicit `attempt` that does not exist returns `404`.
+- `GET /executions/{execution_id}/output`. Same as above for one execution. Default `format` here is `jsonl`.
+- `POST /tasks/{task_id}/cancel`. Optional body `{"reason": "<text>"}`. Cancel propagates to running executions on the next worker poll. `409` when the task is already terminal, `404` when it does not exist or belongs to another workspace.
+- `POST /tasks/{task_id}/retry`. Optional body `{"force_same_worker": false}`. Retries a terminal task in place. `true` pins the retry to the worker of the last started attempt; with no started attempt it falls back to the original targeting, and an `all-available` target ignores the flag.
+- `POST /tasks/{task_id}/fork`. Body: any subset of the create fields. `payload` and `eligibility` deep-merge into the parent. Other fields override only when sent. `run_at` and `idempotency_key` are accepted by the schema and then dropped: a fork never inherits or sets them. The child records `parent_task_id`. The response is the same `201` shape as create, with `parent_task_id` set.
+- `DELETE /tasks/{task_id}`. Hard delete, irreversible, cascades executions and artifacts. `204` on success. `409` when the task is not terminal.
+- `POST /tasks/bulk/delete`. Body `{"task_ids": [<int>, ...]}`, 1 to 500 unique ids. A duplicated or non-positive id rejects the whole request with `422`; ids are not deduped for you. Best effort per id. Response: `{"deleted": [...], "skipped": [{"id", "reason"}], "not_found": [...]}`.
+- `GET /insights/failures`. Query: `since`, `until`, `limit` (1 to 1000, default 100). Live aggregation of `failed` tasks by exit code, by worker and by normalized error signature. Each signature group carries `signature_hash`, `count`, an `example` with `execution_id`, `command_line`, `payload`, `stderr_tail`, and up to 10 `sample_task_ids`. `limit` caps the number of signature groups returned, the top ones by `count`, not the tasks aggregated.
+- `GET /insights/outcomes`. Same as failures plus `status`, `outcome` and `variant` filters. `status` is ONE comma-separated string, not a repeatable parameter: `completed`, `failed`, `cancelled`, default all three, an unknown token returns `422`. A server plugin may declare a retired status token as a legacy alias: the token is translated to its status plus its outcome (the outcome only when the request sets no `outcome`); without that plugin the token is unknown and returns `422`. `variant=current` is accepted here. Covers all terminal states segmented by `(status, outcome)`.
+- `GET /secrets`. Any member. Lists the workspace task secrets: `{"items": [{"name", "fingerprint", "created_at", "updated_at", "updated_by"}], "keys_configured": <bool>}`, ordered by name. Listing works even when the server has no encryption keys; then `keys_configured` is `false` and the listed secrets can neither be set nor delivered to tasks. Values are write-only and never returned. `fingerprint` is `hmac-sha256:<first 12 hex>`: an HMAC-SHA256 of the value keyed with a server key derived from the primary encryption key, with no characters of the value. It can not be computed outside the server: use it to see whether a value changed or whether two secrets hold the same value, not to check a local copy. It changes when the primary key is rotated. `updated_by` is the author's email (or display name), or `null` when that user was deleted.
+- `PUT /secrets/{name}`. Owner only (`403` otherwise). Body `{"value": "<string>"}`, unknown fields rejected. Creates or replaces the secret and returns the item, without the value. Name: `^[A-Za-z_][A-Za-z0-9_]*$`, at most 128 characters, not starting with `ORCH_` in any letter case (the `task_env` `ORCH_` rule stays case-sensitive), and not a reserved name; a bad name is `422`. Reserved names are compared case-insensitively (`http_proxy` is reserved too): exact names `PATH`, the strict `task_env` base names listed below, `BASH_ENV`, `ENV`, `IFS`, `CDPATH`, `SHELLOPTS`, `BASHOPTS`, `PS4`, `PROMPT_COMMAND`, `GCONV_PATH`, `LOCPATH`, `GLIBC_TUNABLES`, `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `JDK_JAVA_OPTIONS`, `PERLLIB`, `CLASSPATH`, `PHPRC`, `CC`, `CXX`, `CPP`, `LDSHARED`, `CFLAGS`, `LDFLAGS`, `MAKEFLAGS`, `GOFLAGS`, `RUSTC_WRAPPER`, `LESSOPEN`, `PAGER`, `EDITOR`, `VISUAL`, `SHELL`, `CURL_HOME`, `WGETRC`, `HGRCPATH`, `HF_ENDPOINT`, `SSLKEYLOGFILE`, `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`; any name starting with `LD_`, `DYLD_`, `PYTHON`, `UV_`, `PIP_`, `SSL_CERT_`, `GIT_`, `PERL5`, `PERL_`, `RUBY`, `GEM_`, `BUNDLE_`, `NPM_CONFIG_`, `JAVA_`, `DOTNET_`, `CORECLR_`, `NODE_`, `CARGO_`, `OPENSSL_`, `XDG_` or `ORCH_`; any name ending in `_CA_BUNDLE`. `GITHUB_TOKEN` is allowed. The list is closed: it only stops a workspace owner from overriding, through server delivery, a variable a task declares; it is not a sandbox. Those values stay in the worker environment. Value: non-empty, no NUL, at most 64 KiB UTF-8; a validation `422` never echoes the value.
+- `DELETE /secrets/{name}`. Owner only. `204`, or `404` when the name does not exist in the workspace. Only the name pattern and length are checked, so a secret whose name became reserved after it was stored can still be deleted.
+- `PUT` and `DELETE /secrets/{name}` return `503` with `error` `task_secrets_unconfigured` when the server has no encryption keys configured (`GET /secrets` answers `200` with `keys_configured: false`). Ask the human operator; do not retry.
+- `GET /insights/signature/tasks`. Query: `signature` or `signature_hash` (exactly one, else `422`; a `signature_hash` that is not a 16-char lowercase hex digest is also `422`), plus the same outcomes filters, with `status` again as one comma-separated string, and `after` (cursor). Lists every task id behind one signature group, paginated. Response: `{generated_at, filters, signature, signature_hash, task_ids, next_after}`. Pass `next_after` back as `after`. Use it when `count` exceeds the 10 samples.
+
+## Task payload contract
+
+The worker runs each task inside an ephemeral Python virtual environment created with `uv`.
+
+```json
+{
+  "requirements": ["<PEP 508 spec>", "..."],
+  "commands": ["<shell command>", "..."],
+  "timeout_seconds": 60,
+  "artifacts": {"include": ["**/*"], "exclude": [], "required": false},
+  "task_env": ["API_TOKEN", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY"],
+  "egress_allowlist": ["files.example.com"],
+  "outcomes": {"exit_codes": {"3": {"name": "no_result", "closes_as": "completed"}}}
+}
+```
+
+- `requirements` (list, may be empty) and `commands` (non-empty list) are mandatory. A malformed payload fails with `exit_code` 2 without running anything.
+- Commands run in order through `/bin/sh -c` with the venv on `PATH`. `timeout_seconds` applies per command (default 60) and every command gets a fresh window. The first command that exits non-zero stops the batch there: the remaining commands are skipped. A command that times out is killed and the batch does continue with the next one. Either case closes the execution `failed`, reporting the exit code of the last command that ran. Do not rely on a trailing command for cleanup or for publishing results. `execution_timeout_seconds` on the task is the outer cap for the whole batch; when it fires the execution closes `cancelled` with reason `outer_timeout`.
+- The working directory is ephemeral and discarded after the run. Write files that must survive to `$ORCASTER_CACHE_DIR` (per-task scratch that a sticky retry reuses) or to `$ORCASTER_ARTIFACTS_DIR` (collected when the `artifacts` block is present). `/api/v1` has no route to list or download artifacts: that lives in the dashboard, behind the session cookie. An agent can confirm that a task produced them and must hand the download to a human.
+- `artifacts`: absent means nothing is collected. `{}` collects everything under the artifacts directory. Globs are POSIX. `exclude` wins over `include`. `required: true` fails the execution when the upload fails.
+- `task_env` and `egress_allowlist` are tri-state. Key absent means legacy mode: full worker environment and open network. Key present, even as `[]`, means strict mode. Each entry must be a bare variable name that matches `[A-Za-z_][A-Za-z0-9_]*` (ASCII), never `NAME=value`, must not start with a known token prefix (`hf_`, `ghp_`, `gho_`, `ghs_`, `ghu_`, `ghr_`, `github_pat_`, `glpat-`, `xoxb-`, `xoxp-` or `sk-`; anchored and case-sensitive, so `HF_TOKEN` and `GITHUB_TOKEN` are fine), and must not start with `ORCH_`; otherwise the create or fork is rejected with `422` and a message that names the 0-based index (`payload.task_env[1] ...`) and never repeats the entry. The `422` of create and fork carries no `input` or `ctx.error` in any error. The rule is a prefix guard plus a shape check, not a secrets scanner: a credential without one of those prefixes (for example an AWS key such as `AKIA...`) is a string of letters, digits and underscores and passes.
+- Strict `task_env` forwards a fixed non-secret base (`HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TMPDIR`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `PYTHONDONTWRITEBYTECODE`, `PYTHONUNBUFFERED`) plus `PATH`, plus the names listed in the key. Each listed name takes the workspace task secret of the same name when one exists (see `/secrets`), and otherwise the worker's own environment; for a reserved name the worker always uses its own value. A name found in neither place is left unset, not an error: the worker only logs a warning with the task id and the names (never values, and never the text of an entry that is not a valid name or starts with a known token prefix).
+- Task secrets reach a task only through a strict `task_env`. Legacy mode (no `task_env`) gets none. The server sends them to the worker next to the payload, never inside it: they are not stored in the task, not shown by `GET /tasks/{id}` and not covered by the task signature. The worker masks delivered values of 8 or more characters as `***` in the streamed output, best effort only (a value the task encodes or splits is not recognized; artifacts are not scanned). Never print or upload a secret from inside a task. If a declared secret exists but the server cannot decrypt it, the execution closes `failed` before it reaches a worker, with a `[server] task secret(s) ... could not be decrypted` line in its output and no automatic retry; report it to the human.
+- Strict `egress_allowlist`: enforcement is a `CONNECT` proxy sidecar on an internal network, not DNS filtering, and it only bites on a worker running with `EGRESS_ISOLATION=1`; without that topology the list is accepted and stored but no network rule applies. A domain that is not listed is refused by that proxy with `403`. Only ports 80 and 443 are reachable. An entry matches exactly (`example.com`); prefix it with `.` or `*.` to match subdomains (`.example.com`). Listing the domain is not enough on its own, because the proxy variables `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` are not in the base environment: declare those three in `task_env` as well, or the commands and the `uv pip install` of the venv fail with a connection timeout even for a listed domain.
+- `outcomes` maps a non-zero exit code to a named outcome and to the state the task closes in. Without the block, the default map of the task's tool applies, and that map comes from the outcome profile of a server plugin, not from the core: a deployment without plugins has no default map, so only `payload.outcomes` classifies and any other non-zero exit closes plain `failed`. The default map also applies to any exit code the block does not declare. Declare in the block every exit code whose outcome you rely on. Exit 0 is always plain `completed`.
+- `eligibility.capabilities` restricts placement to workers whose declared `ORCH_CAPABILITIES` satisfy it; send `{}` for no constraint. Target workers explicitly with the `target` field when placement must be exact.
+
+## Target syntax
+
+- `"N"`: N copies to any available worker (count mode).
+- `"all-available"`: one copy per worker online at creation time. The set is a snapshot. Late workers are not added.
+- `"worker:<uuid>"`: one copy to that worker.
+- `"workers:<uuid>,<uuid>,..."`: N copies claimed by workers of the subset. It does not guarantee one copy per distinct worker: a worker whose previous execution of the task is terminal can claim another copy. Use `all:` for exactly one copy per listed worker.
+- `"all:<uuid>,<uuid>,..."`: snapshot restricted to the subset.
+- `/api/v1` has no worker endpoint. Worker uuids come from the dashboard or from the `worker_id` field of an existing task's `executions`; worker status comes only from the dashboard, because the `status` inside `executions` is the status of the execution, not of the worker. Ask the human for the uuid rather than guessing one.
+
+## Auto retry policy
+
+`auto_retry` is optional. `null` means no automatic retry. Fields: `max_attempts` (0 to 20, 0 = off), `sticky` (default `true`, retry on the same worker to reuse its cache), `retryable_exit_codes` (default `[75]`, the Unix EX_TEMPFAIL convention for transient failures), `retryable_cancelled_reasons` (default `[]`, for example `["outer_timeout"]`), `backoff_seconds` (0 to 3600, default 60), `sticky_offline_timeout_seconds` (0 to 86400, default 1800; once the sticky worker has been offline for that lapse the pool is cleared and any eligible worker may retry).
+
+## States
+
+- Task: `queued` to `dispatching` to one of `completed`, `cancelled`, `failed`. `paused` is reachable from `queued` and `dispatching`. A `paused` task can go straight to `cancelled`. The three closing states are terminal and the only ones that can be deleted. A `completed` task may carry a non-null `outcome`. It still counts as success.
+- Execution: `assigned` to `claimed` to one of `completed`, `failed`, `expired`, `cancelled`. `expired` means the lease ran out or nobody claimed within `claim_timeout_seconds`.
+- Worker: `online`, `paused`, `offline`. A paused worker takes no new tasks but finishes the running one.
+
+## Rules for agents
+
+- Read before you write. Confirm the workspace with `whoami` and confirm the task state with `GET /tasks/{id}` before cancel, retry, fork or delete.
+- Delete is irreversible and destroys artifacts. Ask the human before any delete unless they asked for it explicitly with the ids.
+- Never fabricate a PAT, never reuse one PAT across workspaces, never write a PAT into a task payload.
+- Prefer `fork` over a new task when a variant of an existing task is wanted. The lineage stays auditable.
+- Drive diagnosis from `insights/failures` to `signature/tasks` to `executions/{id}/output`. The `example.execution_id` in each signature group leads straight to the log.
+- Use `include_payload=true` only when the payload is needed. Payloads can be large.
+- Do not spawn `all-available` tasks casually. Each one occupies every online worker.
+- Always send `task_env` and `egress_allowlist` on create and fork, with the minimum set the task needs. Their absence is legacy mode: the full worker environment, with every credential it carries, and open egress. A credential in the worker environment is shared by every task that runs on that worker, so heavy concurrent traffic from your tasks to the service it authenticates can throttle every other job that uses it. A workspace secret with the same name is equally shared by every task that declares it.
+- Never set, replace or delete a task secret unless the human asked for it with the name. A value you set reaches every task in the workspace that declares that name, on its next run. Never put a secret value in a command-line argument, a task payload or a log; pipe it to `orcaster secret set` instead.
+- Never feed a query result straight into `POST /tasks/bulk/delete` or into a cancel or retry loop. Show the resolved ids and their count to the human and get confirmation first.
+- Pause and resume of tasks and workers are operator actions in the dashboard. The API can neither pause nor resume. For a task it can at least observe `paused`, which is a value of the `status` filter and field; for a worker it sees nothing, because `/api/v1` has no worker endpoint. Ask the human.
+- Send an `idempotency_key` on every create whose `target` is a count, `worker:<uuid>` or `workers:<uuids>`, so a request retried after a network error does not duplicate the task. The other two forms, `all-available` and `all:<ids>`, do not support it and reject it with `422`.
+
+## CLI orcaster
+
+`orcaster` is a single Go binary that wraps this API. Install from the GitHub release assets (Linux, macOS and Windows on amd64 and arm64; FreeBSD on amd64) or with `go install github.com/AInvirion/orcaster/orcaster@latest`.
+
+```sh
+export ORCASTER_HOST=https://orcaster.example.com
+export ORCASTER_TOKEN=orcaster_pat_xxxxxxxx
+orcaster auth status
+orcaster task create --payload '{"requirements": [], "commands": ["echo hello"]}' --priority 5
+orcaster task list --status failed --json
+orcaster task output 123 --format jsonl -o run.jsonl
+orcaster insights failures --since 2026-01-01 --json
+```
+
+The `task` and `insights` subcommands accept `--json` to print the raw API body, except `task output`, which returns the log itself and takes `-o <file>` instead. `version`, `auth *` and `config *` have no `--json`. `orcaster task retry` shares the API default: without `--force-same-worker` the retry goes to any eligible worker, exactly like `POST /admin/tasks/{id}/retry` with no body and the dashboard checkbox left unchecked (pass the flag to pin the retry to the worker that ran the last attempt). Errors go to stderr with exit code 1. `task create` and `task fork` accept repeatable `--env NAME` and `--egress-allow DOMAIN` flags that fill `task_env` and `egress_allowlist`.
+
+Task secrets: `orcaster secret set NAME` reads the value from stdin only, never from an argument, flag or environment variable (a hidden prompt on a terminal; from a pipe it reads all of stdin and strips exactly one trailing newline), and prints the name and fingerprint. `orcaster secret list` prints name, fingerprint, update time and author; `--json` prints the raw API body. `orcaster secret delete NAME` asks for confirmation on a terminal and refuses without `--yes` when there is none. Set and delete need an owner's PAT.
+
+```sh
+printf %s "$VALUE" | orcaster secret set API_TOKEN
+orcaster secret list --json
+orcaster secret delete API_TOKEN --yes
+```
+
+## Docs
+
+- [User manual](https://github.com/AInvirion/orcaster/blob/main/docs/user-manual.md): operator guide. Covers login, dashboard, tasks, workers, personal access tokens, outcomes analysis and troubleshooting.
+- [User manual, JSON API reference](https://github.com/AInvirion/orcaster/blob/main/docs/user-manual.md#json-api-reference): authentication and endpoint reference for integrators.
+- [User manual, personal access tokens](https://github.com/AInvirion/orcaster/blob/main/docs/user-manual.md#personal-access-tokens): how a human issues, scopes and revokes the PAT an agent authenticates with.
+- [orcaster CLI README](https://github.com/AInvirion/orcaster/blob/main/orcaster/README.md): installation, profiles, every command and flag.
+- [Live OpenAPI schema](https://orcaster.example.com/openapi.json): generated from the running server (replace the placeholder host with the real base URL). The authoritative request and response shapes, reachable with a PAT. Swagger UI at `https://orcaster.example.com/docs`, a browser page behind the dashboard session.
+- [CHANGELOG](https://github.com/AInvirion/orcaster/blob/main/CHANGELOG.md): what changed in each release, including API additions.

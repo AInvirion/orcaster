@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Outcomes - Orcaster{% endblock %}
+{% block content %}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a href="/admin/" class="breadcrumb-back">
+    <span aria-hidden="true">←</span> Dashboard
+  </a>
+</nav>
+<h2>Outcomes</h2>
+<p class="muted">
+  Terminal tasks in this workspace, grouped by error signature, with breakdowns
+  by exit code, worker and outcome.
+</p>
+{% include "_tz_note.html" %}
+{# hx-sync + hx-disabled-elt: every `change` fires a GET; without
+   coordination, fast clicks pile up aggregations on the server (aborting the
+   XHR does not cancel the query in Postgres) and a dead request leaves the
+   data of the previous filter under the new controls. `this:replace` makes the
+   last change win; disabling the controls while a request is in flight
+   avoids the pile-up and shows that the page is working. PLAIN selectors
+   scoped by id, not `find`: `find X` resolves only the FIRST matching
+   descendant (querySelector), and here all of them must be disabled. #}
+<form id="failures-filter"
+      hx-get="/admin/outcomes/partial"
+      hx-target="#failures-block"
+      hx-trigger="change, submit"
+      hx-swap="innerHTML"
+      hx-include="this"
+      hx-sync="this:replace"
+      hx-disabled-elt="#failures-filter input, #failures-filter select, #failures-filter button"
+      hx-indicator="this, #failures-loading">
+  <div class="failures-controls">
+    <div class="failures-group">
+      <span class="failures-group-label" id="failures-range-label">Window</span>
+      <div class="failures-presets" role="group" aria-labelledby="failures-range-label">
+        {% for value, label in range_presets %}
+        <label class="failures-preset{% if selected_range == value %} is-active{% endif %}"><input type="radio" name="range" value="{{ value }}"{% if selected_range == value %} checked{% endif %}>{{ label }}</label>
+        {% endfor %}
+      </div>
+    </div>
+    <label class="failures-limit">
+      Limit
+      <select name="limit">
+        {% for opt in limit_options %}
+        <option value="{{ opt }}" {% if selected_limit == opt %}selected{% endif %}>{{ opt }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <div class="failures-group">
+      <span class="failures-group-label" id="failures-status-label">Status</span>
+      <div class="failures-presets" role="group" aria-labelledby="failures-status-label">
+        {% for value, label in status_presets %}
+        <label class="failures-preset{% if selected_status == value %} is-active{% endif %}"><input type="radio" name="status" value="{{ value }}"{% if selected_status == value %} checked{% endif %}>{{ label }}</label>
+        {% endfor %}
+      </div>
+    </div>
+    <label class="failures-limit">
+      Outcome
+      <select name="outcome">
+        <option value="" {% if not selected_outcome %}selected{% endif %}>All</option>
+        {% for opt in outcome_options %}
+        <option value="{{ opt }}" {% if selected_outcome == opt %}selected{% endif %}>{{ opt }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {# Version lens: re-scales the error aggregation to a variant.
+       The "current" set is resolved over the variants present AMONG THE FAILED ones, not all of them. It lives in #failures-filter (hx-trigger="change" +
+       hx-include="this"), so changing it re-fires the partial with the variant. #}
+    <label class="failures-limit">
+      Version
+      <select name="variant" class="filter-variant-select"
+              data-off-current="{{ 'true' if selected_variant not in ('', 'current') else 'false' }}"
+              title="Scope failures to a tool version. Default shows the current (latest) version of each tool.">
+        {% include "_variant_options.html" %}
+      </select>
+    </label>
+    {# The button shares the form's sync scope: an in-flight Refresh is
+       replaced by the next filter change and vice versa. #}
+    <button type="button" class="failures-refresh"
+            hx-get="/admin/outcomes/partial"
+            hx-target="#failures-block"
+            hx-include="#failures-filter"
+            hx-swap="innerHTML"
+            hx-sync="#failures-filter:replace"
+            hx-disabled-elt="#failures-filter input, #failures-filter select, #failures-filter button"
+            hx-indicator="#failures-filter, #failures-loading">⟳ Refresh</button>
+    <span id="failures-loading" class="failures-loading htmx-indicator" role="status" aria-label="Loading"></span>
+  </div>
+</form>
+<div id="failures-block">
+  {% include "_outcomes.html" %}
+</div>
+{% endblock %}

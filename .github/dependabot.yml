@@ -1,0 +1,88 @@
+# Dependabot version updates configuration.
+#
+# Without this file only security updates run (triggered by an advisory already
+# published against the repository). This adds scheduled version updates, which
+# raise a vulnerable dependency BEFORE the public CVE exists.
+#
+# Real ecosystems of the repository (checked in the tree, not invented):
+#   - server/  -> uv (pyproject.toml + uv.lock)
+#   - client/  -> uv (pyproject.toml + uv.lock)
+#   - orcaster/ -> gomod (go.mod + go.sum)
+#   - /.github/workflows -> github-actions
+#   - client/  -> docker (client/Dockerfile)
+#
+# Minor/patch updates of each directory are grouped into a single PR so as not
+# to open one PR per package; majors stay separate for manual review, because
+# they often bring incompatible changes.
+#
+# Auto-merge is not enabled: every PR is reviewed by hand. CI already checks
+# that uv.lock is in sync with pyproject.toml (`uv lock --check`).
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/server"
+    schedule:
+      interval: "weekly"
+    groups:
+      server-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "server"
+
+  - package-ecosystem: "uv"
+    directory: "/client"
+    schedule:
+      interval: "weekly"
+    groups:
+      client-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "client"
+
+  # Worker image: `client/Dockerfile` pins `uv` by version and digest;
+  # Dependabot proposes the full pair. The Python base image is excluded from
+  # major and minor bumps: moving to 3.14 is a separate decision.
+  - package-ecosystem: "docker"
+    directory: "/client"
+    schedule:
+      interval: "weekly"
+    ignore:
+      - dependency-name: "python"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+    labels:
+      - "dependencies"
+      - "client"
+
+  - package-ecosystem: "gomod"
+    directory: "/orcaster"
+    schedule:
+      interval: "weekly"
+    groups:
+      orcaster-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "cli"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "ci"

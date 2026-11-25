@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Admin actions - Orcaster{% endblock %}
+{% block content %}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a href="/admin/" class="breadcrumb-back">
+    <span aria-hidden="true">←</span> Dashboard
+  </a>
+</nav>
+<h2>Admin actions audit log</h2>
+<p class="muted">
+  Last {{ limit }} actions. Filter by action or target type; the table refreshes every 3s.
+</p>
+{% include "_tz_note.html" %}
+<form id="filter-form"
+      hx-get="/admin/actions/partial"
+      hx-target="#actions-block"
+      hx-trigger="change, submit, every 3s"
+      hx-swap="innerHTML"
+      hx-include="this">
+  <div class="grid">
+    <label>
+      Action
+      <select name="action">
+        <option value="" {% if not selected_action %}selected{% endif %}>(any)</option>
+        {% for a in action_values %}
+        <option value="{{ a }}" {% if selected_action == a %}selected{% endif %}>{{ a }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Target
+      <select name="target_kind">
+        <option value="" {% if not selected_target_kind %}selected{% endif %}>(any)</option>
+        {% for tk in target_kind_values %}
+        <option value="{{ tk }}" {% if selected_target_kind == tk %}selected{% endif %}>{{ tk }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Limit
+      <input type="number" name="limit" value="{{ limit }}" min="1" max="500">
+    </label>
+  </div>
+</form>
+<div id="actions-block">
+  {% include "_admin_actions_table.html" %}
+</div>
+{% endblock %}

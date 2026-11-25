@@ -1,0 +1,127 @@
+# GoReleaser configuration of an Orcaster release (schema v2).
+#
+# It builds the command-line client (cross-compiled, one archive per platform,
+# an SPDX SBOM per archive written by syft) and publishes ONE GitHub release per
+# tag `vX.Y.Z` that carries every component:
+#   orcaster-cli-X.Y.Z-<os>-<arch>.tar.gz|.zip   CLI (built here)
+#   orcaster-server-X.Y.Z.tar.gz                 server bundle    } built by
+#   orcaster-worker-X.Y.Z.tar.gz                 worker bundle    } ops/release/
+#   orcaster_worker-X.Y.Z-py3-none-any.whl       worker wheel     } build-components.sh
+#   orcaster-X.Y.Z-checksums.txt                 SHA-256 of every asset
+# The server and worker files are taken from ORCASTER_COMPONENTS_DIR (required:
+# the release fails when it is not set). The release workflow adds a GitHub
+# artifact attestation (build provenance) for every asset; verify a download
+# with the checksums file or `gh attestation verify <file> -R AInvirion/orcaster`.
+#
+# The release workflow (.github/workflows/release.yml) runs it on a tag `v*`.
+# Local check without publishing (builds every component, see docs/releasing.md):
+#   ops/release/dry-run.sh
+version: 2
+
+project_name: orcaster
+
+git:
+  # The Go module tag orcaster/vX.Y.Z sits on the release commit next to vX.Y.Z
+  # (ops/release/tag-release.sh). It is not a release version: without this,
+  # a build without GORELEASER_CURRENT_TAG takes it as the current tag and
+  # fails ("invalid characters").
+  ignore_tags:
+    - "orcaster/*"
+
+before:
+  hooks:
+    - go mod tidy
+    # LICENSE, NOTICE and THIRD_PARTY live at the repository root, outside this
+    # module directory; copy them here so every archive carries them. In a tree
+    # without them at the root, set ORCASTER_NOTICE_DIR to the directory that
+    # holds all three.
+    - sh -c 'd="${ORCASTER_NOTICE_DIR:-..}"; for f in LICENSE NOTICE THIRD_PARTY; do [ -f "$d/$f" ] || { echo "missing $d/$f (set ORCASTER_NOTICE_DIR)" >&2; exit 1; }; cp "$d/$f" "$f"; done'
+
+builds:
+  - id: orcaster
+    main: .
+    binary: orcaster
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+      - freebsd
+    goarch:
+      - amd64
+      - arm64
+    # FreeBSD ships for amd64 only; every other OS gets amd64 and arm64.
+    ignore:
+      - goos: freebsd
+        goarch: arm64
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    # Sets api.Version, which `orcaster version` prints and the User-Agent
+    # carries. The default in code is "dev".
+    ldflags:
+      - -s -w
+      - -X github.com/AInvirion/orcaster/orcaster/internal/api.Version={{ .Version }}
+
+archives:
+  - id: orcaster
+    # orcaster-cli-<version>-<os>-<arch>: the `cli` component names it apart
+    # from the server and worker assets of the same release.
+    ids:
+      - orcaster
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}-cli-{{ .Version }}-{{ .Os }}-{{ .Arch }}
+    # Windows archives are .zip (the platform convention).
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - README.md
+      - LICENSE
+      - NOTICE
+      - THIRD_PARTY
+
+sboms:
+  # One SPDX JSON SBOM per archive, written by syft (it must be in PATH):
+  # orcaster-cli-<version>-<os>-<arch>.<ext>.sbom.json
+  - id: archive
+    artifacts: archive
+    cmd: syft
+    args: ["$artifact", "--output", "spdx-json=$document"]
+    documents:
+      - "{{ .ArtifactName }}.sbom.json"
+
+checksum:
+  # One checksums file for the whole release: the CLI archives and SBOMs, and
+  # the server and worker files of ORCASTER_COMPONENTS_DIR.
+  name_template: "{{ .ProjectName }}-{{ .Version }}-checksums.txt"
+  algorithm: sha256
+  extra_files:
+    - glob: "{{ .Env.ORCASTER_COMPONENTS_DIR }}/*"
+
+snapshot:
+  # A snapshot carries the release version (GORELEASER_CURRENT_TAG), so the
+  # snapshot that the release workflow checks before publishing has exactly the
+  # asset names of the release.
+  version_template: "{{ .Version }}"
+
+changelog:
+  # The release notes come from the CHANGELOG.md section of the tag
+  # (ops/release/release-notes.sh, passed with --release-notes), not from
+  # commit history.
+  disable: true
+
+release:
+  # Published to the public repository only; the release workflow runs there
+  # and nowhere else. The tag versions the whole system (server, worker and
+  # CLI share one version); every component is an asset of its release.
+  github:
+    owner: AInvirion
+    name: orcaster
+  name_template: "Orcaster {{ .Tag }}: server, worker and CLI"
+  extra_files:
+    - glob: "{{ .Env.ORCASTER_COMPONENTS_DIR }}/*"

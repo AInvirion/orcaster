@@ -1,0 +1,20 @@
+ID:         195
+Status:     cancelled
+Target:     count (count 2)
+Progress:   0/1
+Priority:   0
+Retries:    1
+Children:   2
+Created:    2026-06-02 16:25:00
+Claim timeout: 60s
+Exec timeout:  300s
+Cancelled:  superseded by fork
+
+Payload:
+{
+  "cmd": "echo bye"
+}
+
+Executions:
+ATTEMPT  WORKER  STATUS  EXIT  FINISHED
+0        w-abc   failed  1     2026-06-02 16:25:40

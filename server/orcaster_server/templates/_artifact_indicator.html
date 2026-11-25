@@ -1,0 +1,70 @@
+{# Artifact indicator. Visible text is in ENGLISH.
+   produced = unique artifacts with the suffix configured in the workspace (DB).
+   uploaded = artifacts actually uploaded by the external sync (sync_status.json). If there is no valid status (`uploaded` is None) only
+   `produced` is shown (graceful degradation).
+
+   Structure: a <details class="tele-pop"> whose summary shows the two
+   numbers inline, told apart by ICON (hexagon = produced, arrow = upload)
+   -- the icon carries the meaning, not a "/" that reads as a fraction. The
+   popover holds the labelled detail plus the sync freshness (live <time>),
+   reachable by keyboard and touch (a title would not be). The <li> is refreshed with
+   morph:innerHTML, so an open popover survives the 30s poll (app.js
+   preserves `open` on .tele-pop). #}
+{% import "_macros.html" as macros %}
+{% if uploaded is not none %}
+{# data-keep-open: app.js (configureIdiomorph) preserves `open` between polls.
+   data-header-popover: app.js (initHeaderDisclosures / SEL) closes it on
+   Escape/click-outside because it is a floating header popover. The contract
+   lives in app.js. #}
+<details class="tele-pop artifact-indicator-pop" data-keep-open data-header-popover>
+  {# aria-label names the whole chip; the open/closed state comes from the
+     native <details> (do not bake "Open for..." into the text: it would go stale
+     once opened). No visually-hidden <span> here: the aria-label wins as the
+     accessible name and would override it, announcing twice. #}
+  <summary class="tele-summary"
+           aria-label="Artifacts: {{ count | thousands }} produced, {{ uploaded | thousands }} uploaded"
+           title="{{ count | thousands }} produced &middot; {{ uploaded | thousands }} uploaded">
+    <span class="tele-metric">
+      {{ macros.tele_hex_icon() }}
+      <span class="tele-num">{{ count | thousands }}</span>
+    </span>
+    <span class="tele-metric">
+      <svg class="tele-icon" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M8 1.5 12.5 6H9.5v4h-3V6h-3z"/>
+        <rect x="3" y="12.4" width="10" height="2" rx="1"/>
+      </svg>
+      <span class="tele-num">{{ uploaded | thousands }}</span>
+    </span>
+    <span class="tele-caret" aria-hidden="true">&#9662;</span>
+  </summary>
+  <div class="tele-pop-body" role="group" aria-label="Artifact sync detail">
+    <div class="tele-row">
+      <span class="tele-row-label">Produced</span>
+      <span class="tele-row-val">{{ count | thousands }}</span>
+    </div>
+    <div class="tele-row">
+      <span class="tele-row-label">Uploaded</span>
+      <span class="tele-row-val">{{ uploaded | thousands }}</span>
+    </div>
+    {% if pushed_at %}
+    <p class="tele-foot">
+      synced {{ macros.ts(pushed_at, 'relative') }}{% if commit_sha %} &middot; <code>{{ commit_sha }}</code>{% endif %}
+    </p>
+    {% elif commit_sha %}
+    <p class="tele-foot"><code>{{ commit_sha }}</code></p>
+    {% endif %}
+  </div>
+</details>
+{% else %}
+{# No sync status: only the produced number, no popover (there is no detail
+   to show). #}
+<span class="tele-group"
+      aria-label="Artifacts: {{ count | thousands }} unique"
+      title="Unique artifacts matching the configured suffix">
+  <span class="tele-metric">
+    {{ macros.tele_hex_icon() }}
+    {# The container's aria-label is already the accessible name; do not duplicate. #}
+    <span class="tele-num">{{ count | thousands }}</span>
+  </span>
+</span>
+{% endif %}

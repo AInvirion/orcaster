@@ -1,0 +1,25 @@
+{# Incremental polling fragment. It replaces the previous poller (outerHTML):
+   it contains the new events (seq > after, at most one page) followed by
+   a fresh poller with the cursor advanced, so the lines end up
+   appended at the end of the log. If a page is pending (`has_more`) the
+   poller fires immediately (`load delay:100ms`) even if the execution is
+   terminal; when it is terminal and has no backlog NO new poller is emitted -> the
+   polling stops by itself. The status line is refreshed separately via
+   hx-swap-oob. Strict whitespace control ({%- -%}): the log container
+   is white-space: pre-wrap and any stray text node accumulates as a
+   visible blank line on every poll.
+   SYNC NOTE: the poller span is duplicated in _execution_output_body.html;
+   any change to its markup must be replicated in that file. #}
+{%- include "_execution_output_lines.html" -%}
+{%- if live or has_more -%}<span id="exec-output-poller"
+      {%- if live %} class="poller-live"{% endif %} aria-hidden="true"
+      hx-get="{{ poll_url }}"
+      {# With SSE active the trigger listens to sse:output-<id> (new lines) and sse:execution-<id> (status change; refreshes the statusline OOB and stops the poller on reaching terminal), plus a load delay if there is a backlog. An `every Ns` guard is deliberately NOT added: reconnecting after the stream drops is the browser EventSource's responsibility. #}
+      {%- if sse_enabled %}
+      hx-trigger="sse:output-{{ execution_id }}, sse:execution-{{ execution_id }}{% if has_more %}, load delay:100ms{% endif %}"
+      {%- else %}
+      hx-trigger="{{ poll_trigger }}"
+      {%- endif %}
+      hx-swap="outerHTML"
+      hx-target="this"></span>{%- endif -%}
+{%- with oob=true %}{% include "_execution_output_statusline.html" %}{% endwith -%}

@@ -1,0 +1,436 @@
+<dialog id="new-task-modal" aria-labelledby="new-task-title">
+  <article>
+    <header>
+      {# Modal window actions, grouped on the right (the header is
+         a flex row-reverse): expand to full screen and close. The group
+         keeps space-between from spreading the buttons to the centre. #}
+      <div class="modal-header-actions">
+        <button type="button" class="modal-fullscreen-btn"
+                data-action="toggle-fullscreen"
+                aria-label="Expand to full screen" aria-pressed="false">
+          {# Two icons: frame outwards (expand) and inwards
+             (restore); .is-fullscreen on the dialog toggles which one is shown. #}
+          <svg class="icon-expand" viewBox="0 0 16 16" width="16" height="16"
+               fill="none" stroke="currentColor" stroke-width="1.6"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4"/>
+          </svg>
+          <svg class="icon-collapse" viewBox="0 0 16 16" width="16" height="16"
+               fill="none" stroke="currentColor" stroke-width="1.6"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M2 6h4V2M14 6h-4V2M2 10h4v4M14 10h-4v4"/>
+          </svg>
+        </button>
+        <button type="button" aria-label="Close" rel="prev"></button>
+      </div>
+      {# h2: the modal lives inside the dashboard's document outline (h1
+         "Tasks" + h2 "Workers"); using h3 here produces a detectable h1->h3 skip
+         under WCAG 2.2 (SC 1.3.1). The <dialog> + aria-labelledby already gives semantic
+         scope; the right level is h2 to keep the hierarchy continuous. #}
+      <h2 id="new-task-title">New task</h2>
+    </header>
+
+    <form id="new-task-form" novalidate>
+      {# Explanations live in accessible info-tips (APG tooltip pattern):
+         trigger with aria-describedby pointing to the bubble, revealed on hover AND focus,
+         dismissible with Esc, hoverable. The operator does not need always-visible
+         microcopy (product principle); the hint is one focus away. #}
+      <div class="field-label-row">
+        <label class="req" for="nt-commands">Commands</label>
+        <span class="info-tip">
+          <button type="button" class="info-tip-btn"
+                  aria-describedby="nt-commands-tip" aria-label="About Commands"></button>
+          <span role="tooltip" id="nt-commands-tip" class="info-tip-bubble">
+            One shell command per line. Each runs via <code>/bin/sh -c</code>
+            in order; the batch stops at the first non-zero exit.
+          </span>
+        </span>
+        {# Live count of real commands (parseLines: discards empty
+           lines). It is not explanatory microcopy -- it is state, like the rest of the
+           dashboard (product principle: "the page is the state"). initCommandEditor
+           fills it in; it starts empty to avoid flicker on the server render. #}
+        <span class="cmd-count" id="nt-commands-count" aria-live="polite"></span>
+      </div>
+      {# The numbered gutter makes the "1 line = 1 command" model literal: each
+         physical row carries its number, and wrap=off keeps a long command
+         (curl with flags/URLs) from wrapping and being mistaken for several. Long
+         commands scroll horizontally, like an editor. The gutter is
+         aria-hidden: visual decoration, not content for readers. #}
+      <div class="cmd-editor">
+        <div class="cmd-gutter" aria-hidden="true"><div class="cmd-gutter-lines"></div></div>
+        <textarea id="nt-commands" name="commands" required
+                  rows="3" wrap="off" spellcheck="false"
+                  autocapitalize="off" autocorrect="off"
+                  placeholder='/bin/echo hello&#10;ls /tmp'></textarea>
+      </div>
+      <small class="err" id="nt-commands-err" role="alert"></small>
+
+      <div class="field-label-row">
+        <label for="nt-requirements">Requirements</label>
+        <span class="info-tip">
+          <button type="button" class="info-tip-btn"
+                  aria-describedby="nt-requirements-tip" aria-label="About Requirements"></button>
+          <span role="tooltip" id="nt-requirements-tip" class="info-tip-bubble">
+            Optional. One pip requirement per line, installed into an ephemeral
+            venv before the commands run.
+          </span>
+        </span>
+      </div>
+      <textarea id="nt-requirements" name="requirements"
+                rows="2"
+                placeholder='requests&#10;httpx&gt;=0.25'></textarea>
+      <small class="err" id="nt-requirements-err" role="alert"></small>
+
+      <fieldset class="target-fieldset">
+        <legend class="req">Target mode</legend>
+        {# Single source per mode: each radio's tooltip. The information is not
+           repeated elsewhere (no inline description, dynamic hint or
+           "Compare modes" table); it lives in one place. #}
+        <label class="radio-inline">
+          <input type="radio" name="target_mode" value="count" checked>
+          <span>count</span>
+          <span class="info-tip">
+            <button type="button" class="info-tip-btn"
+                    aria-describedby="nt-mode-count-tip" aria-label="About count mode"></button>
+            <span role="tooltip" id="nt-mode-count-tip" class="info-tip-bubble">
+              Dispatch N copies to any available worker. Races across all
+              <code>online</code> workers; the first N claims win, until the
+              target count is reached.
+            </span>
+          </span>
+        </label>
+        <label class="radio-inline">
+          <input type="radio" name="target_mode" value="all-available">
+          <span>all-available</span>
+          <span class="info-tip">
+            <button type="button" class="info-tip-btn"
+                    aria-describedby="nt-mode-all-available-tip" aria-label="About all-available mode"></button>
+            <span role="tooltip" id="nt-mode-all-available-tip" class="info-tip-bubble">
+              One copy per worker that is <code>online</code> at submit time.
+              Immediate snapshot fan-out.
+            </span>
+          </span>
+        </label>
+        <label class="radio-inline">
+          <input type="radio" name="target_mode" value="worker">
+          <span>worker(s)</span>
+          <span class="info-tip">
+            <button type="button" class="info-tip-btn"
+                    aria-describedby="nt-mode-worker-tip" aria-label="About worker(s) mode"></button>
+            <span role="tooltip" id="nt-mode-worker-tip" class="info-tip-bubble">
+              Target specific workers by id. One selected worker uses
+              <code>worker:&lt;id&gt;</code> (PUSH-able); several race within the
+              subset via <code>workers:&lt;ids&gt;</code>.
+            </span>
+          </span>
+        </label>
+        <label class="radio-inline">
+          <input type="radio" name="target_mode" value="all-subset">
+          <span>all-subset</span>
+          <span class="info-tip">
+            <button type="button" class="info-tip-btn"
+                    aria-describedby="nt-mode-all-subset-tip" aria-label="About all-subset mode"></button>
+            <span role="tooltip" id="nt-mode-all-subset-tip" class="info-tip-bubble">
+              One copy per worker in a chosen subset, via
+              <code>all:&lt;ids&gt;</code>.
+            </span>
+          </span>
+        </label>
+      </fieldset>
+
+      {# One-line reminder of the SELECTED mode (not all four), in
+         plain language. The technical detail per mode (worker:<id> codes,
+         races, snapshot) lives only in the tooltips: this does not
+         reintroduce the repetition that the fieldset documents avoiding, it only
+         gives the "what did I choose" at a glance for the most consequential decision
+         of the form. updateTargetMode() fills it in. #}
+      <p class="target-mode-desc" id="target-mode-desc" aria-live="polite"></p>
+
+      <div id="target-count-row">
+        <label class="req" for="nt-target-count">Target count</label>
+        <input type="number" id="nt-target-count" name="target_count"
+               min="1" step="1" value="1">
+        <small class="err" id="nt-target-count-err"></small>
+      </div>
+
+      <div id="target-workers-row" class="hidden">
+        <div class="workers-picker-header">
+          <div class="field-label-row">
+            <label class="req" id="nt-workers-legend">Workers</label>
+            <span class="info-tip">
+              <button type="button" class="info-tip-btn"
+                      aria-describedby="nt-workers-tip" aria-label="About worker selection"></button>
+              <span role="tooltip" id="nt-workers-tip" class="info-tip-bubble">
+                One worker uses <code>worker:&lt;id&gt;</code> (PUSH-able).
+                Several use <code>workers:&lt;ids&gt;</code> (race within the
+                subset). Only <code>online</code> workers can be selected.
+              </span>
+            </span>
+          </div>
+          <span class="muted workers-picker-counter"
+                id="nt-workers-count" aria-live="polite">0 selected</span>
+        </div>
+        <div class="workers-picker-search-wrap hidden"
+             id="nt-workers-search-wrap">
+          <input type="search" class="filter-search workers-picker-search"
+                 id="nt-workers-search" autocomplete="off"
+                 placeholder="Filter by hostname or id"
+                 aria-label="Filter workers">
+        </div>
+        <div id="nt-workers-picker" class="workers-picker" tabindex="-1"
+             role="group" aria-labelledby="nt-workers-legend">
+          <p class="muted" id="nt-workers-loading">Loading workers…</p>
+        </div>
+        <div class="workers-picker-toolbar hidden" id="nt-workers-toolbar">
+          <button type="button" class="btn-secondary"
+                  id="nt-workers-select-all">Select all online</button>
+          <button type="button" class="btn-secondary"
+                  id="nt-workers-clear">Clear</button>
+        </div>
+        <small class="err" id="nt-workers-err" role="alert"></small>
+      </div>
+
+      <details class="advanced">
+        <summary>Advanced options</summary>
+
+        <div class="field-label-row">
+          <label for="nt-priority">Priority</label>
+          <span class="info-tip">
+            <button type="button" class="info-tip-btn"
+                    aria-describedby="nt-priority-tip" aria-label="About Priority"></button>
+            <span role="tooltip" id="nt-priority-tip" class="info-tip-bubble">
+              Default <code>0</code>. Higher runs first.
+            </span>
+          </span>
+        </div>
+        <input type="number" id="nt-priority" name="priority"
+               step="1" value="0" min="-32768" max="32767">
+        <small class="err" id="nt-priority-err"></small>
+
+        <div class="field-label-row">
+          <label for="nt-claim-timeout">Claim timeout (seconds)</label>
+          <span class="info-tip">
+            <button type="button" class="info-tip-btn"
+                    aria-describedby="nt-claim-timeout-tip" aria-label="About Claim timeout"></button>
+            <span role="tooltip" id="nt-claim-timeout-tip" class="info-tip-bubble">
+              Maximum time an <code>assigned</code> worker has to claim the task.
+            </span>
+          </span>
+        </div>
+        <input type="number" id="nt-claim-timeout" name="claim_timeout_seconds"
+               min="1" step="1" placeholder="server default">
+        <small class="err" id="nt-claim-timeout-err"></small>
+
+        <div class="field-label-row">
+          <label for="nt-exec-timeout">Execution timeout (seconds)</label>
+          <span class="info-tip">
+            <button type="button" class="info-tip-btn"
+                    aria-describedby="nt-exec-timeout-tip" aria-label="About Execution timeout"></button>
+            <span role="tooltip" id="nt-exec-timeout-tip" class="info-tip-bubble">
+              Total budget for all <code>commands</code> combined. Raise it for
+              slow steps like large model downloads.
+            </span>
+          </span>
+        </div>
+        <input type="number" id="nt-exec-timeout" name="timeout_seconds"
+               min="1" step="1" placeholder="worker default">
+        <small class="err" id="nt-exec-timeout-err"></small>
+
+        {# run_at only applies to `count`; updateTargetMode() hides this row in
+           the other modes so it is not a silent no-op. #}
+        <div id="nt-run-at-row">
+          <div class="field-label-row">
+            <label for="nt-run-at">Run at</label>
+            <span class="info-tip">
+              <button type="button" class="info-tip-btn"
+                      aria-describedby="nt-run-at-tip" aria-label="About Run at"></button>
+              <span role="tooltip" id="nt-run-at-tip" class="info-tip-bubble">
+                Earliest local time before which the task is not eligible.
+                Applies to <code>count</code> only.
+              </span>
+            </span>
+          </div>
+          <input type="datetime-local" id="nt-run-at" name="run_at" step="1">
+          <small class="err" id="nt-run-at-err"></small>
+        </div>
+      </details>
+
+      {# Artifact contract. The worker ONLY collects and uploads
+         files if the payload carries the `artifacts` block; without it the task
+         finishes without delivering anything (silently). The toggle decides whether we include
+         the block; the include/exclude/required rules stay hidden until
+         it is checked so as not to ask for globs from someone who produces no artifacts. #}
+      <details class="artifacts">
+        <summary>Artifacts</summary>
+
+        <label class="checkbox-row" for="nt-artifacts-enabled">
+          <input type="checkbox" id="nt-artifacts-enabled" name="artifacts_enabled">
+          <span>Collect output artifacts</span>
+          <span class="info-tip">
+            <button type="button" class="info-tip-btn"
+                    aria-describedby="nt-artifacts-tip" aria-label="About artifacts"></button>
+            <span role="tooltip" id="nt-artifacts-tip" class="info-tip-bubble">
+              The task writes files to <code>$ORCASTER_ARTIFACTS_DIR</code>. When
+              on, the worker collects and uploads them after the commands finish,
+              and they become downloadable. Leave off and nothing is uploaded.
+            </span>
+          </span>
+        </label>
+
+        {# Only visible with the toggle active (updateArtifactsFields). The globs
+           use the same line-based editor as Commands/Requirements. #}
+        <div id="nt-artifacts-fields" class="artifacts-fields hidden">
+          <div class="field-label-row">
+            <label for="nt-artifacts-include">Include</label>
+            <span class="info-tip">
+              <button type="button" class="info-tip-btn"
+                      aria-describedby="nt-artifacts-include-tip" aria-label="About Include"></button>
+              <span role="tooltip" id="nt-artifacts-include-tip" class="info-tip-bubble">
+                Optional. One POSIX glob per line, relative to the artifacts dir
+                (e.g. <code>**/*.csv</code>, <code>report/**</code>). Empty means
+                everything (<code>**/*</code>).
+              </span>
+            </span>
+          </div>
+          <textarea id="nt-artifacts-include" name="artifacts_include"
+                    rows="2" wrap="off" spellcheck="false"
+                    autocapitalize="off" autocorrect="off"
+                    placeholder='**/*.csv&#10;report/**'></textarea>
+
+          <div class="field-label-row">
+            <label for="nt-artifacts-exclude">Exclude</label>
+            <span class="info-tip">
+              <button type="button" class="info-tip-btn"
+                      aria-describedby="nt-artifacts-exclude-tip" aria-label="About Exclude"></button>
+              <span role="tooltip" id="nt-artifacts-exclude-tip" class="info-tip-bubble">
+                Optional. POSIX globs to drop, one per line. Exclude wins over
+                include.
+              </span>
+            </span>
+          </div>
+          <textarea id="nt-artifacts-exclude" name="artifacts_exclude"
+                    rows="2" wrap="off" spellcheck="false"
+                    autocapitalize="off" autocorrect="off"
+                    placeholder='**/*.tmp'></textarea>
+
+          <label class="checkbox-row" for="nt-artifacts-required">
+            <input type="checkbox" id="nt-artifacts-required" name="artifacts_required">
+            <span>Required</span>
+            <span class="info-tip">
+              <button type="button" class="info-tip-btn"
+                      aria-describedby="nt-artifacts-required-tip" aria-label="About Required"></button>
+              <span role="tooltip" id="nt-artifacts-required-tip" class="info-tip-bubble">
+                Fail the task if the artifact upload fails (e.g. quota or disk
+                limits). Off: upload failures are logged but the task still
+                completes.
+              </span>
+            </span>
+          </label>
+        </div>
+      </details>
+
+      {# Per-task isolation. task_env/egress_allowlist live as
+         reserved keys inside `payload` (JSONB) and are THREE-STATE: key
+         absent = legacy mode (no isolation); key present even if []
+         = strict mode (clean env / egress denied); with values = only
+         those allowed. The toggle decides whether we include the keys; with it on
+         BOTH are ALWAYS sent (even if empty), so the UI can express the
+         three states. Sending [] is NOT the same as omitting the key. #}
+      <details class="isolation">
+        <summary>Isolation (env / egress)</summary>
+
+        <label class="checkbox-row" for="nt-isolation-enabled">
+          <input type="checkbox" id="nt-isolation-enabled" name="isolation_enabled">
+          <span>Enable isolation</span>
+          <span class="info-tip">
+            <button type="button" class="info-tip-btn"
+                    aria-describedby="nt-isolation-tip" aria-label="About isolation"></button>
+            <span role="tooltip" id="nt-isolation-tip" class="info-tip-bubble">
+              Off: the task runs in legacy mode (no isolation). On: it runs with a
+              clean environment and all egress denied by default; only the env var
+              names and domains you list below are forwarded. Empty lists mean
+              strict mode (clean environment / all egress denied).
+            </span>
+          </span>
+        </label>
+
+        {# Only visible with the toggle active (updateIsolationFields). Same line-based
+           editor as Commands/Requirements: one per line, trim + discard
+           empty lines, but the key is still sent as [] if the toggle is On. #}
+        <div id="nt-isolation-fields" class="isolation-fields hidden">
+          <div class="field-label-row">
+            <label for="nt-task-env">Environment variables</label>
+            <span class="info-tip">
+              <button type="button" class="info-tip-btn"
+                      aria-describedby="nt-task-env-tip" aria-label="About environment variables"></button>
+              <span role="tooltip" id="nt-task-env-tip" class="info-tip-bubble">
+                One env var name per line, forwarded to the task from a stored
+                secret or the worker environment. Write the name only, never
+                <code>NAME=value</code> or a token: letters, digits and
+                underscores, not starting with a digit. Entries starting with a
+                known token prefix (<code>hf_</code>, <code>ghp_</code>,
+                <code>sk-</code>...) are rejected, and so are names starting
+                with <code>ORCH_</code> (worker/control-plane secrets). Empty =
+                clean environment.
+              </span>
+            </span>
+          </div>
+          <textarea id="nt-task-env" name="task_env"
+                    rows="2" wrap="off" spellcheck="false"
+                    autocapitalize="off" autocorrect="off"
+                    placeholder='API_TOKEN&#10;HOME'></textarea>
+          <small class="err" id="nt-task-env-err" role="alert"></small>
+
+          <div class="field-label-row">
+            <label for="nt-egress-allowlist">Egress allowlist</label>
+            <span class="info-tip">
+              <button type="button" class="info-tip-btn"
+                      aria-describedby="nt-egress-tip" aria-label="About egress allowlist"></button>
+              <span role="tooltip" id="nt-egress-tip" class="info-tip-bubble">
+                One allowed egress domain per line (e.g.
+                <code>pypi.org</code>). Empty = all egress denied.
+              </span>
+            </span>
+          </div>
+          <textarea id="nt-egress-allowlist" name="egress_allowlist"
+                    rows="2" wrap="off" spellcheck="false"
+                    autocapitalize="off" autocorrect="off"
+                    placeholder='pypi.org&#10;github.com'></textarea>
+          <small class="err" id="nt-egress-allowlist-err" role="alert"></small>
+        </div>
+      </details>
+
+      <details class="contract">
+        <summary>View worker contract</summary>
+        <p class="muted">
+          Commands and requirements: the worker creates an ephemeral venv from
+          <code>payload.requirements</code> (list of pip specs) and then
+          executes <code>payload.commands</code> sequentially via
+          <code>/bin/sh -c</code> within that venv. <code>commands</code> must
+          be a non-empty list of strings; <code>requirements</code> may be
+          empty. Any other payload shape is rejected with exit code 2.
+        </p>
+        <p class="muted">
+          Artifacts: when the optional <code>payload.artifacts</code>
+          block is present, the worker collects the files the task wrote to
+          <code>$ORCASTER_ARTIFACTS_DIR</code> — filtered by the
+          <code>include</code>/<code>exclude</code> POSIX globs — and uploads
+          them. Without the block nothing is collected.
+        </p>
+        <p class="muted">
+          Isolation: the reserved <code>payload.task_env</code> and
+          <code>payload.egress_allowlist</code> keys are tri-state. Absent means
+          legacy mode (no isolation). Present but empty (<code>[]</code>) means
+          strict mode (clean environment / all egress denied). Present with
+          values forwards only those env vars / allows only those domains.
+        </p>
+      </details>
+    </form>
+
+    <footer class="modal-footer">
+      <span class="form-result" id="nt-result" aria-live="polite"></span>
+      <button type="button" class="btn-secondary" data-action="close-modal">Cancel</button>
+      <button type="submit" id="nt-submit" form="new-task-form">Create task</button>
+    </footer>
+  </article>
+</dialog>

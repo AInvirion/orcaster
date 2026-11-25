@@ -1,0 +1,298 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: no job writes to the repository.
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: server (lint + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+
+    services:
+      postgres:
+        # Same major as production (Postgres 17) and as `PG_IMAGE` in the Makefile:
+        # a migration that passes on one major and fails on another must not reach main.
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: tasktest
+          POSTGRES_PASSWORD: tasktest
+          POSTGRES_DB: tasktest
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tasktest"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://tasktest:tasktest@127.0.0.1:5432/tasktest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          # uv is pinned: it decides the criterion of `uv lock --check`, so a
+          # bump is a reviewable change, like those of ruff or golangci-lint.
+          version: "0.13.8"
+          enable-cache: true
+          cache-dependency-glob: server/uv.lock
+          # Fixed, like production (3.13.5): without this uv takes the newest
+          # interpreter it finds, and a wheel that does not exist yet for it
+          # breaks `uv sync`. Moving to 3.14 is a separate decision.
+          python-version: "3.13"
+
+      # A bare `uv sync` re-resolves silently, so a green CI would not prove
+      # that the committed `uv.lock` is the one that was installed: `--check`
+      # fails explicitly on a desync and `--frozen` forbids re-resolution.
+      # Do NOT declare `UV_FROZEN` at job level: it degrades `--check` to
+      # verifying that the lock exists, parses and is structurally coherent,
+      # without verifying that it is up to date, so the step stays green on a
+      # desynchronized lock.
+      - name: Verify lockfile is in sync
+        run: uv lock --check
+
+      - name: Sync dependencies
+        run: uv sync --frozen --extra dev
+
+      - name: Lint (ruff)
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Tests (pytest)
+        run: uv run pytest
+
+  # Go CLI job (orcaster/ directory). Its name is a check required by the
+  # ruleset of main: renaming the job requires changing the ruleset in the same step.
+  orcaster:
+    name: orcaster (lint + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: orcaster
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: orcaster/go.mod
+          cache-dependency-path: orcaster/go.sum
+
+      - name: gofmt (check)
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "Unformatted files:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.12.2
+          working-directory: orcaster
+
+      - name: Tests (go test)
+        run: go test ./...
+
+  # Licences of the Go CLI: every linked module must have an allowed licence and
+  # an entry in the third-party notice. Without this job, a Dependabot bump
+  # leaves the notice out of date until the release. go-licenses is pinned: a
+  # version change is a reviewable change, like that of golangci-lint.
+  licenses:
+    name: licenses (orcaster)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: orcaster/go.mod
+          cache-dependency-path: orcaster/go.sum
+
+      - name: Install go-licenses v2.0.1
+        run: go install github.com/google/go-licenses/v2@v2.0.1
+
+      - name: Check licences against the third-party notice
+        run: make licenses-orcaster
+
+  # Worker wheel: it is built, installed in a clean venv outside the checkout
+  # and tested (import, --help, --version, no top-level `app`/`alembic`/`scripts`).
+  # uv is pinned as in the other jobs.
+  worker-wheel:
+    name: worker wheel (build + smoke)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.8"
+          enable-cache: true
+          cache-dependency-glob: client/uv.lock
+          python-version: "3.13"
+
+      # The smoke test also scans the unpacked wheel contents and blocks on a
+      # hit (enforce), so an unexpected name in the worker package fails here.
+      - name: Build and smoke-test the wheel
+        env:
+          WHEEL_SMOKE_GATE: enforce
+        run: client/scripts/wheel-smoke.sh
+
+  client:
+    name: client (lint + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          # uv is pinned: it decides the criterion of `uv lock --check`, so a
+          # bump is a reviewable change, like those of ruff or golangci-lint.
+          version: "0.13.8"
+          enable-cache: true
+          cache-dependency-glob: client/uv.lock
+          # Fixed, like production (3.13.5): without this uv takes the newest
+          # interpreter it finds, and a wheel that does not exist yet for it
+          # breaks `uv sync`. Moving to 3.14 is a separate decision.
+          python-version: "3.13"
+
+      # A bare `uv sync` re-resolves silently, so a green CI would not prove
+      # that the committed `uv.lock` is the one that was installed: `--check`
+      # fails explicitly on a desync and `--frozen` forbids re-resolution.
+      # Do NOT declare `UV_FROZEN` at job level: it degrades `--check` to
+      # verifying that the lock exists, parses and is structurally coherent,
+      # without verifying that it is up to date, so the step stays green on a
+      # desynchronized lock.
+      - name: Verify lockfile is in sync
+        run: uv lock --check
+
+      - name: Sync dependencies
+        run: uv sync --frozen --extra dev
+
+      - name: Lint (ruff)
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Tests (pytest)
+        run: uv run pytest
+
+  bats:
+    name: bats (shell tests)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # bats-core by tag and verified commit: the apt package on ubuntu-latest
+      # is older and the suites ask for `bats_require_minimum_version 1.5.0`.
+      - name: Install bats-core v1.14.0
+        env:
+          BATS_VERSION: v1.14.0
+          BATS_COMMIT: eb7f42f8d608ac693d7a4b67474f6714ea68cfc5
+        run: |
+          git clone --quiet --depth 1 --branch "$BATS_VERSION" \
+            https://github.com/bats-core/bats-core.git "$RUNNER_TEMP/bats-core"
+          actual="$(git -C "$RUNNER_TEMP/bats-core" rev-parse HEAD)"
+          if [ "$actual" != "$BATS_COMMIT" ]; then
+            echo "bats-core $BATS_VERSION points to $actual, expected $BATS_COMMIT"; exit 1
+          fi
+          sudo "$RUNNER_TEMP/bats-core/install.sh" /usr/local
+          bats --version
+          git --version
+
+      # The make-release tests create commits in temporary repositories.
+      - name: Configure git identity
+        run: |
+          git config --global user.name "ci"
+          git config --global user.email "ci@example.invalid"
+
+      - name: ops/release
+        run: bats ops/release/tests
+
+      - name: setup-scripts/debian13-worker
+        run: bats setup-scripts/debian13-worker/tests
+
+      - name: setup-scripts/debian13
+        run: bats setup-scripts/debian13/tests
+
+  actions-pinned:
+    name: actions pinned by SHA
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Every action goes by full commit SHA with the tag in a comment
+      # (`uses: owner/repo@<40 hex> # vX.Y.Z`): a tag is mutable, a SHA is not.
+      # Dependabot (github-actions ecosystem) keeps SHA and comment up to date.
+      - name: Check every uses line has a full commit SHA
+        run: |
+          bad="$(grep -nE '^[[:space:]]*(-[[:space:]]+)?uses:' .github/workflows/*.yml \
+            | grep -vE 'uses:[[:space:]]+[^@[:space:]]+@[0-9a-f]{40}[[:space:]]+#[[:space:]]*v[0-9]' || true)"
+          if [ -n "$bad" ]; then
+            echo "uses: without a 40-character SHA and a version comment:"
+            echo "$bad"
+            exit 1
+          fi
+
+  check-links:
+    # Two things with different weight in one job, so `continue-on-error` sits on
+    # the step and not on the job: the checker's own tests (`scripts/tests`)
+    # block; the walk over the tree only reports while references to files that
+    # are not in the tree remain. Once the walk reaches zero findings, remove
+    # `continue-on-error` from the step so that it blocks.
+    name: link checker (tests + report)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Install pytest
+        run: pip install pytest==9.2.0
+
+      - name: Tests (pytest)
+        run: python3 -m pytest -q scripts/tests
+
+      # `shell: bash` enables `pipefail`: without it, `| tee` masks the checker's
+      # exit 1 and the step would look green with findings. With it, the step
+      # really fails and `continue-on-error` only keeps it from failing the job.
+      - name: Link check over the tree (report, non-blocking)
+        continue-on-error: true
+        shell: bash
+        run: python3 scripts/check_links.py . --list-limit 50 | tee -a "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,58 @@
+# link-check: ignore-file (these are path patterns, not links)
+# Editor backups (Emacs)
+*~
+\#*\#
+.\#*
+
+# Local editor/agent config
+.claude/
+
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Env
+.env
+.venv/
+
+# setup.env may hold plaintext tokens and does not match the `.env` pattern above.
+setup.env
+
+# IDE
+.idea/
+.vscode/
+
+# uv
+**/.venv/
+
+# Local planning files (ephemeral, never versioned)
+/findings.md
+/task_plan.md
+/progress.md
+planning/
+
+# Browser automation cache
+.playwright-mcp/
+
+# Release artefacts, never versioned.
+/dist/
+
+# Dev secrets (local Ed25519 PEM, never versioned)
+*.pem
+# Server Ed25519 public key (not secret, but per deployment: never versioned)
+server-ed25519.pub
+
+*.png
+# Documentation screenshots are versioned.
+!docs/images/**/*.png
+
+# Fixtures of the WORKER_RO_MOUNTS tests: they are created next to the .bats
+# files (setup-scripts/debian13-worker/tests/ and ops/release/tests/) because
+# mktemp lands under /var or /tmp, which the validator rejects. The teardown
+# removes them; this covers an interrupted run. No leading slash: any depth.
+ro-fixture.*/

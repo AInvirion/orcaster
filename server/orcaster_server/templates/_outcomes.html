@@ -1,0 +1,150 @@
+{% from "_macros.html" import ts, exit_badge %}
+{# Shared cell of the side panels: magnitude bar (proportion vs.
+   the panel maximum) + count. Reuses the --pct + scaleX pattern of the
+   usage-bars. The bar is neutral, not semantic: it only conveys "who dominates". #}
+{% macro _bar_cell(count, maxc) -%}
+<td class="failures-bar-cell"><span class="failures-bar" aria-hidden="true"><span class="failures-bar-fill" data-pct="{{ '%.4f' % (count / maxc) if maxc else '0' }}"></span></span></td><td class="failures-count">{{ count | thousands }}</td>
+{%- endmacro %}
+<div class="failures-summary">
+  <span class="failures-total">{{ outcomes.total_tasks | thousands }}</span>
+  <span class="muted">terminal tasks</span>
+  <span class="muted">· as of {{ ts(outcomes.generated_at, 'relative') }}</span>
+</div>
+{# Breakdown by (status, outcome): bounded, separated chips, subordinate to the
+   total. Capped to the top 6 by count (already sorted desc); the rest go in a
+   disclosure. This avoids a run of spans without separator that would compete with the
+   total and grow without limit under status=all. #}
+{% if outcomes.by_status_outcome %}
+<div class="failures-breakdown">
+  {% for so in outcomes.by_status_outcome[:6] %}
+  <span class="failures-chip"><span class="failures-chip-label">{{ so.status }}{% if so.outcome %} · {{ so.outcome }}{% endif %}</span><span class="failures-chip-count">{{ so.count | thousands }}</span></span>
+  {% endfor %}
+  {% if outcomes.by_status_outcome | length > 6 %}
+  <details class="failures-chip-more">
+    <summary class="failures-chip"><span class="failures-chip-label">+{{ outcomes.by_status_outcome | length - 6 }} more</span></summary>
+    <div class="failures-breakdown-rest">
+      {% for so in outcomes.by_status_outcome[6:] %}
+      <span class="failures-chip"><span class="failures-chip-label">{{ so.status }}{% if so.outcome %} · {{ so.outcome }}{% endif %}</span><span class="failures-chip-count">{{ so.count | thousands }}</span></span>
+      {% endfor %}
+    </div>
+  </details>
+  {% endif %}
+</div>
+{% endif %}
+<div class="failures-layout">
+  <section class="failures-main">
+    {% if outcomes.by_signature %}
+    {# Legend of the exit code colour: brings the meaning out of the title hover
+       (inaccessible to touch/keyboard/colour-blind users) into view. The chips reuse
+       exit_badge, so they are identical to those in the list and to their colour class. #}
+    <details class="failures-legend">
+      <summary><span class="failures-legend-caret" aria-hidden="true"></span>Exit code colors</summary>
+      <ul class="failures-legend-items">
+        <li>{{ exit_badge(137) }}<span class="muted">signal termination · infrastructure</span></li>
+        <li>{{ exit_badge(1) }}<span class="muted">application error · non-zero exit</span></li>
+        <li>{{ exit_badge(none) }}<span class="muted">no exit code · expired or lost</span></li>
+      </ul>
+    </details>
+    <div class="failures-list">
+      <div class="failures-list-head" aria-hidden="true">
+        <span></span>
+        <span>Signature</span>
+        <span class="failures-col-count">Count</span>
+        <span>Exit codes</span>
+      </div>
+      {% for g in outcomes.by_signature %}
+      <details class="failures-detail">
+        <summary class="failures-row">
+          <span class="failures-disclosure" aria-hidden="true"></span>
+          <code class="failures-sig">{{ g.signature }}</code>
+          <span class="failures-count">{{ g.count | thousands }}</span>
+          <span class="failures-exits">
+            {% for ec in g.exit_codes %}{{ exit_badge(ec) }}{% endfor %}
+          </span>
+        </summary>
+        <div class="failures-example">
+          {% set ex = g.example %}
+          {% if ex.command_line %}<div><span class="muted">command:</span> <code>{{ ex.command_line }}</code></div>{% endif %}
+          <div class="muted">
+            worker {% if ex.worker_id %}<a href="/admin/workers/{{ ex.worker_id }}" title="{{ ex.worker_id }}">{{ ex.worker_id[:8] }}</a>{% else %}—{% endif %}
+            · exit {{ ex.exit_code if ex.exit_code is not none else "—" }}
+            · {{ ex.duration_seconds | duration_human }}
+            · {{ ts(ex.finished_at, 'datetime') }}
+          </div>
+          {% if ex.stderr_tail %}<div class="failures-tail-label muted">stderr</div><pre class="failures-tail">{{ ex.stderr_tail }}</pre>{% endif %}
+          {% if ex.stdout_tail %}<div class="failures-tail-label muted">stdout</div><pre class="failures-tail">{{ ex.stdout_tail }}</pre>{% endif %}
+          {% if ex.payload %}<div class="failures-tail-label muted">payload</div><pre class="failures-tail">{{ ex.payload | payload_json }}</pre>{% endif %}
+          <div class="failures-actions">
+            {% if ex.execution_id %}
+            <a href="/admin/executions/{{ ex.execution_id }}/output/download?format=text">download full log</a>
+            {% endif %}
+            <span class="muted">tasks: {% for tid in g.sample_task_ids %}<a href="/admin/tasks/{{ tid }}">#{{ tid }}</a> {% endfor %}</span>
+          </div>
+        </div>
+      </details>
+      {% endfor %}
+    </div>
+    {% else %}
+    {% set _win = {'24h': 'the last 24 hours', '7d': 'the last 7 days', '30d': 'the last 30 days', 'all': 'this workspace'} %}
+    {% set _status_noun = {'failed': 'failed', 'completed': 'completed', 'cancelled': 'cancelled', 'all': 'terminal'} %}
+    {% set _status_detail = {
+      'failed': 'Every task in this window finished without error.',
+      'completed': 'No task in this window closed as completed.',
+      'cancelled': 'No task in this window was cancelled.',
+      'all': 'No task in this window reached a terminal state.',
+    } %}
+    <div class="failures-zero">
+      <p class="failures-zero-title">No {{ _status_noun[selected_status] }} tasks in {{ _win[selected_range] }}.</p>
+      <p class="muted">{{ _status_detail[selected_status] }}</p>
+    </div>
+    {% endif %}
+  </section>
+  <aside class="failures-panels" aria-label="Breakdown by exit code and worker">
+    <div class="failures-panel">
+      <h3>By exit code</h3>
+      {% set emax = outcomes.by_exit_code[0].count if outcomes.by_exit_code else 0 %}
+      <table>
+        <tbody>
+          {% for e in outcomes.by_exit_code[:10] %}
+          <tr><td>{{ exit_badge(e.exit_code) }}</td>{{ _bar_cell(e.count, emax) }}</tr>
+          {% else %}
+          <tr><td class="muted" colspan="3">—</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if outcomes.by_exit_code | length > 10 %}
+      <details class="failures-more">
+        <summary>Show {{ outcomes.by_exit_code | length - 10 }} more</summary>
+        <table><tbody>
+          {% for e in outcomes.by_exit_code[10:] %}
+          <tr><td>{{ exit_badge(e.exit_code) }}</td>{{ _bar_cell(e.count, emax) }}</tr>
+          {% endfor %}
+        </tbody></table>
+      </details>
+      {% endif %}
+    </div>
+    <div class="failures-panel">
+      <h3>By worker</h3>
+      {% set wmax = outcomes.by_worker[0].count if outcomes.by_worker else 0 %}
+      <table>
+        <tbody>
+          {% for w in outcomes.by_worker[:10] %}
+          <tr><td>{% if w.worker_id %}<a href="/admin/workers/{{ w.worker_id }}"><code title="{{ w.worker_id }}">{{ w.worker_id[:8] }}</code></a>{% else %}<code class="muted">—</code>{% endif %}</td>{{ _bar_cell(w.count, wmax) }}</tr>
+          {% else %}
+          <tr><td class="muted" colspan="3">—</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if outcomes.by_worker | length > 10 %}
+      <details class="failures-more">
+        <summary>Show {{ outcomes.by_worker | length - 10 }} more</summary>
+        <table><tbody>
+          {% for w in outcomes.by_worker[10:] %}
+          <tr><td>{% if w.worker_id %}<a href="/admin/workers/{{ w.worker_id }}"><code title="{{ w.worker_id }}">{{ w.worker_id[:8] }}</code></a>{% else %}<code class="muted">—</code>{% endif %}</td>{{ _bar_cell(w.count, wmax) }}</tr>
+          {% endfor %}
+        </tbody></table>
+      </details>
+      {% endif %}
+    </div>
+  </aside>
+</div>

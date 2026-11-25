@@ -1,0 +1,37 @@
+{# Single timestamp macro. Always emits the ISO UTC in `datetime`/`title`;
+   `app.js` (initTimestamps) rewrites the text to local time according to data-ts-format.
+   Without JS, the server-side fallback stays in UTC. format: datetime|compact|relative. #}
+{%- macro ts(value, format='datetime', cls='') -%}
+{%- if value -%}
+<time class="js-ts{% if cls %} {{ cls }}{% endif %}" data-ts-format="{{ format }}" datetime="{{ value | iso_utc }}" title="UTC · {{ value | iso_utc }}">
+{%- if format == 'compact' -%}{{ value | dt_compact }}
+{%- elif format == 'relative' -%}{{ value | relative_time }}
+{%- else -%}{{ value | dt_human }}
+{%- endif -%}
+</time>
+{%- else -%}
+<span class="muted">—</span>
+{%- endif -%}
+{%- endmacro -%}
+
+{# Hexagonal "produced" icon of the artifact indicator. Shared by
+   both branches of _artifact_indicator.html. #}
+{% macro tele_hex_icon() %}
+<svg class="tele-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1 14 4.5 14 11.5 8 15 2 11.5 2 4.5Z"/></svg>
+{% endmacro %}
+
+{# Severity class for percentage-based storage metrics:
+   >=90% danger, >=75% warn. Emits the leading space before the class so it
+   concatenates directly after "tele-metric"/"tele-row--bar". Whitespace control
+   (-) keeps Jinja from injecting line breaks inside the class attribute. #}
+{%- macro severity_class(pct) -%}
+{%- if pct >= 90 %} is-danger{% elif pct >= 75 %} is-warn{% endif -%}
+{%- endmacro -%}
+
+{# Exit code chip of the failures view. The colour encodes the failure
+   class (signal/infra = warn, application error = danger, no code = neutral)
+   via the exit_severity filter; the number remains the canonical signal and the
+   title (exit_hint) explains the class. A single source for row and panel. #}
+{%- macro exit_badge(code) -%}
+<span class="badge badge-exit {{ code | exit_severity }}"{% if code | exit_hint %} title="{{ code | exit_hint }}"{% endif %}>{{ code if code is not none else "—" }}</span>
+{%- endmacro -%}

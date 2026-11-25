@@ -1,0 +1,463 @@
+{% from "_macros.html" import ts %}
+{% extends "base.html" %}
+{% block title %}Task #{{ task.id }} - Orcaster{% endblock %}
+{% block body_class %}task-detail-body{% endblock %}
+{% block content %}
+{% set _terminal = ["completed", "cancelled", "failed"] %}
+{% set _empty_status = ["completed", "cancelled", "failed", "expired", "running", "assigned"] %}
+
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a href="/admin/" class="breadcrumb-back">
+    <span aria-hidden="true">←</span> Tasks
+  </a>
+</nav>
+
+<div class="page-header task-detail-header">
+  <div class="task-detail-title">
+    <h1 class="page-title">
+      <span class="task-detail-id">Task #{{ task.id }}</span>
+      <span id="task-status-badge" class="badge badge-{{ task.status }}">{{ task.status }}</span>
+      {% if task.outcome %}<span class="badge badge-outcome" title="Terminal outcome">{{ task.outcome }}</span>{% endif %}
+    </h1>
+    {# `command` is the worker's internal verb (e.g. "run_batch"): noise for
+       the operator. As in the listing, we show the payload summary
+       (args_pretty). We only fall back to the raw command if the payload
+       summarizes to nothing (e.g. push/control tasks without `commands`). #}
+    {% set _args = task.payload | args_pretty %}
+    {% set _cmds = task.payload | payload_commands %}
+    {% set _pjson = task.payload | payload_json %}
+    {# `.task-detail-meta` is a <div> (not <p>) on purpose: a <details> is
+       flow content and the parser would auto-close a <p>, orphaning
+       mode/priority/time. The disclosure panel is a SIBLING of the <details> (not
+       its child) and is revealed via `details[open] ~ .payload-disclosure-panel` with
+       flex-basis:100%, so it falls on its own line without re-centering the row. #}
+    <div class="task-detail-meta">
+      <details class="payload-disclosure">
+        <summary class="cmd-chip payload-disclosure-summary">
+          <span class="disclosure-caret" aria-hidden="true">▸</span>
+          <span class="payload-disclosure-text">{{ _args if _args else task.command }}</span>
+        </summary>
+      </details>
+      <span class="task-detail-sep" aria-hidden="true">·</span>
+      <span class="task-detail-mode">{{ task.target_mode }} {{ task.target_count }}</span>
+      <span class="task-detail-sep" aria-hidden="true">·</span>
+      <span class="task-detail-priority">priority {{ task.priority }}</span>
+      <span class="task-detail-sep" aria-hidden="true">·</span>
+      {% if task.created_at %}
+      {{ ts(task.created_at, 'datetime', 'task-detail-time') }}
+      {% else %}
+      <span class="muted">no created_at</span>
+      {% endif %}
+      <div class="payload-disclosure-panel">
+        {% if _cmds %}
+        <div class="payload-cmds-header">
+          <span class="payload-panel-label">COMMANDS · {{ _cmds | length }}</span>
+          <button type="button" class="copy-btn" data-copy="{{ _pjson }}"
+                  aria-label="Copy payload JSON">
+            <span class="copy-btn-icon" aria-hidden="true">⧉</span>
+            <span class="copy-btn-text">Copy</span>
+            <span class="copy-btn-feedback" aria-live="polite"></span>
+          </button>
+        </div>
+        <ol class="payload-cmd-list">
+          {% for _c in _cmds %}
+          <li class="payload-cmd-item"><span class="payload-cmd-text">{{ _c }}</span></li>
+          {% endfor %}
+        </ol>
+        <details class="payload-json-details">
+          <summary>
+            <span class="disclosure-caret" aria-hidden="true">▸</span> view JSON
+          </summary>
+          <ol class="payload-json-pre">
+            {% for _line in _pjson.splitlines() %}
+            <li><span class="payload-json-line">{{ _line }}</span></li>
+            {% endfor %}
+          </ol>
+        </details>
+        {% elif task.payload %}
+        <div class="payload-cmds-header">
+          <span class="payload-panel-label">PAYLOAD</span>
+          <button type="button" class="copy-btn" data-copy="{{ _pjson }}"
+                  aria-label="Copy payload JSON">
+            <span class="copy-btn-icon" aria-hidden="true">⧉</span>
+            <span class="copy-btn-text">Copy</span>
+            <span class="copy-btn-feedback" aria-live="polite"></span>
+          </button>
+        </div>
+        <ol class="payload-json-pre">
+          {% for _line in _pjson.splitlines() %}
+          <li><span class="payload-json-line">{{ _line }}</span></li>
+          {% endfor %}
+        </ol>
+        {% else %}
+        <p class="payload-empty muted">No structured payload</p>
+        {% endif %}
+      </div>
+    </div>
+    {# Permanent attempt breakdown. Visually clarifies the quirk where
+       `task.status = completed` can coexist with `failed` attempts after
+       retries: the header above shows the aggregate status, this line
+       shows the per-attempt breakdown. Buckets at 0 are omitted to avoid
+       visual noise. #}
+    {% set _attempt_buckets = [
+      ('done', agg.done),
+      ('running', agg.running),
+      ('assigned', agg.assigned),
+      ('failed', agg.failed),
+      ('cancelled', agg.cancelled),
+      ('expired', agg.expired),
+    ] %}
+    {% set _nonzero = _attempt_buckets | selectattr(1) | list %}
+    {# When the aggregate status is SUCCESS (completed) but there were
+       failed/expired attempts before (after retries), the green badge can hide
+       those failures. In that case we un-mute the breakdown and prefix it with an
+       attention marker — without alarming (the task did finish OK), only "legible
+       when something went wrong". It does not apply to failed/cancelled tasks: there
+       the badge already shouts. #}
+    {% set _hidden_failures = task.status == "completed" and (agg.failed or agg.expired) %}
+    {# We always render the container (even empty) so the polling OOB swap
+       can replace it when attempts appear. Without this, the element
+       would not exist initially and htmx could not inject it. #}
+    <p id="task-detail-attempts" class="task-detail-attempts{% if _hidden_failures %} task-detail-attempts-flagged{% endif %}" aria-label="Attempt breakdown"{% if not _nonzero %} hidden{% endif %}>
+      {% if _hidden_failures %}
+      <span class="task-detail-attempts-flag" aria-hidden="true" title="This task completed, but earlier attempts failed">⚠</span>
+      {% endif %}
+      {% for label, count in _nonzero %}
+        {% if not loop.first %}<span class="task-detail-sep" aria-hidden="true">·</span>{% endif %}
+        <span class="task-detail-attempt task-detail-attempt-{{ label }}">
+          <strong>{{ count }}</strong> {{ label }}
+        </span>
+      {% endfor %}
+    </p>
+    {# The task is materialized and nobody can run it. The badge says
+       `dispatching`, which here means "waiting", so we say so: the
+       reason (measured now, not when the task was created) and what to do. The
+       requirements are named when the reason is the capability — it is the
+       datum the operator needs to start a worker that does qualify. #}
+    {% if awaiting_eligible_reason %}
+    <p id="task-awaiting-eligible" class="task-detail-awaiting" role="status"
+       data-reason="{{ awaiting_eligible_reason }}">
+      <span class="task-detail-awaiting-mark" aria-hidden="true">⏳</span>
+      <strong>Waiting for an eligible worker.</strong>
+      {{ awaiting_eligible_text }}
+      {% if awaiting_eligible_reason == "no_workers_with_capabilities" and required_capabilities %}
+      <span class="task-detail-awaiting-caps">Requires:
+        {% for _cap in required_capabilities %}<code>{{ _cap }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.
+      </span>
+      {% endif %}
+    </p>
+    {% endif %}
+    {# `last_error` of a task closed without an eligible worker (`all:<ids>` with
+       the entire pool ineligible). It was written on close, so it is the state
+       of the fleet AT THAT moment — that is why it is shown as is and not
+       recomputed: the workers that were missing may be online now. #}
+    {% if task.status == "failed" and task.last_error %}
+    <p id="task-last-error" class="task-detail-last-error">
+      <span class="task-detail-last-error-mark" aria-hidden="true">⚠</span>
+      {{ task.last_error }}
+    </p>
+    {% endif %}
+    {% if task.parent_task_id is not none %}
+    <p class="task-detail-lineage muted">
+      Forked from
+      <a href="/admin/tasks/{{ task.parent_task_id }}">#{{ task.parent_task_id }}</a>
+      — {{ "modified params" if fork_params_changed else "identical params" }}
+    </p>
+    {% endif %}
+    {% if task.retry_count and task.retry_count > 0 %}
+    <p class="task-detail-retries muted">
+      Retried {{ task.retry_count }} time{{ "s" if task.retry_count != 1 else "" }} (in place)
+    </p>
+    {% endif %}
+  </div>
+  <div id="task-detail-actions" class="task-detail-actions">
+    {% set _is_terminal = task.status in _terminal %}
+    {# Info-tip at the start of the row (before the buttons): explains the
+       difference between Retry and Fork. Hover AND focus (APG pattern); both buttons
+       reference it via aria-describedby. #}
+    <span class="info-tip task-detail-action-tip">
+      <button type="button" class="info-tip-btn"
+              aria-describedby="task-actions-tip-bubble"
+              aria-label="About Retry and Fork"></button>
+      <span role="tooltip" id="task-actions-tip-bubble" class="info-tip-bubble">
+        <strong>Retry</strong> reuses this task in place: same ID, keeps cache and
+        attempt history. <strong>Fork</strong> queues a new task from these
+        parameters (editable first), linked to this one as its parent.
+      </span>
+    </span>
+    <button id="retry-btn"
+            class="btn-secondary task-detail-action"
+            data-retry
+            data-task-id="{{ task.id }}"
+            data-task-status="{{ task.status }}"
+            aria-describedby="task-actions-tip-bubble"
+            {% if not _is_terminal %}disabled aria-disabled="true"{% endif %}
+            title="{% if _is_terminal %}Retry the same task (preserves cache and history){% else %}Retry is available only for tasks in a terminal state.{% endif %}">
+      Retry
+    </button>
+    {# Fork opens the "New task" modal prefilled with the original's
+       parameters; the user can adjust them before submit. The difference
+       with Retry: Retry reuses the same task_id (in place, increments
+       retry_count); Fork creates a new task with parent_task_id. #}
+    <button id="fork-btn"
+            class="btn-secondary task-detail-action"
+            data-fork
+            data-fork-body='{{ fork_body_json }}'
+            data-source-task-id="{{ task.id }}"
+            aria-describedby="task-actions-tip-bubble"
+            title="Fork this task as a new run (you can edit parameters before queueing)">
+      Fork…
+    </button>
+    {% if task.status not in _terminal %}
+    <button class="btn-warning task-detail-action"
+            hx-post="/admin/tasks/{{ task.id }}/cancel"
+            hx-params="none"
+            hx-confirm="custom"
+            hx-swap="none"
+            data-after-request="reload"
+            data-confirm
+            data-confirm-tone="warn"
+            data-confirm-action="cancel"
+            data-confirm-title="Cancel task #{{ task.id }}?"
+            data-confirm-message="Running executions will receive the cancellation on their next heartbeat."
+            data-confirm-reason="Cancellation reason (optional)">
+      Cancel task
+    </button>
+    {% else %}
+    <button class="btn-secondary task-detail-action"
+            hx-delete="/admin/tasks/{{ task.id }}"
+            hx-confirm="custom"
+            hx-swap="none"
+            data-after-request="dashboard"
+            data-confirm
+            data-confirm-tone="danger"
+            data-confirm-action="delete"
+            data-confirm-title="Delete task #{{ task.id }}?"
+            data-confirm-message="The task is {{ task.status }}. This removes the record and all its executions and cannot be undone.">
+      Delete task
+    </button>
+    {% endif %}
+  </div>
+  {# Retry targeting option. Lives OUTSIDE #task-detail-actions on purpose: that
+     row is re-rendered every 3s by the polling OOB swap (plain outerHTML, not
+     morph), which would reset the checkbox mid-interaction. Here it keeps its
+     state. The retry JS reads it live at click time. Shown next to the Retry
+     button (which is always present, disabled for non-terminal tasks). #}
+  {% if task.target_mode == 'all_available' %}
+  <p id="retry-same-worker-note" class="task-detail-retry-opt muted" role="note">
+    “Same worker” doesn’t apply here: retrying an all-available task re-snapshots
+    every online worker.
+  </p>
+  {% else %}
+  {# info-tip is a SIBLING of the <label>, not a child: an interactive button
+     inside a label toggles the control on click and pollutes its accessible
+     name. #}
+  <div class="task-detail-retry-opt">
+    <input type="checkbox" id="retry-same-worker" name="force_same_worker">
+    <label for="retry-same-worker">Retry on the same worker</label>
+    <span class="info-tip info-tip--end">
+      <button type="button" class="info-tip-btn"
+              aria-describedby="retry-same-worker-tip"
+              aria-label="About retrying on the same worker"></button>
+      <span role="tooltip" id="retry-same-worker-tip" class="info-tip-bubble">
+        Off by default: the retry goes to <strong>any eligible worker</strong>.
+        Check to pin it to the worker that ran the last attempt (reuses its local
+        <code>$ORCASTER_CACHE_DIR</code>) — useful for debugging, but it waits if
+        that worker is down, busy, or retired.
+      </span>
+    </span>
+  </div>
+  {% endif %}
+  <p id="retry-result" class="form-result muted task-detail-retry-result" role="status" aria-live="polite"></p>
+  <p id="fork-result" class="form-result muted task-detail-fork-result" role="status" aria-live="polite"></p>
+</div>
+
+<div hx-get="/admin/tasks/{{ task.id }}" hx-trigger="every 3s"
+     hx-select="#executions-block" hx-target="#executions-block" hx-swap="outerHTML"
+     hx-select-oob="#task-status-badge,#task-detail-attempts,#task-detail-actions">
+  <section id="executions-block" class="executions-block" aria-label="Executions">
+    <header class="executions-head">
+      <h2>Executions</h2>
+      <p class="executions-summary">
+        {# Always show progress + target. Hide buckets where value=0 to avoid the
+           identical-cards-grid pattern; show them as a single inline run. #}
+        <span class="stat stat-progress">
+          <strong>{{ agg.done }}</strong>
+          <span class="stat-sep">/</span>{{ agg.target_count }}
+          <span class="stat-label">done</span>
+        </span>
+        {% if agg.running %}
+        <span class="stat"><strong>{{ agg.running }}</strong><span class="stat-label">running</span></span>
+        {% endif %}
+        {% if agg.assigned %}
+        <span class="stat"><strong>{{ agg.assigned }}</strong><span class="stat-label">assigned</span></span>
+        {% endif %}
+        {% if agg.failed %}
+        <span class="stat stat-warn"><strong>{{ agg.failed }}</strong><span class="stat-label">failed</span></span>
+        {% endif %}
+        {% if agg.cancelled %}
+        <span class="stat"><strong>{{ agg.cancelled }}</strong><span class="stat-label">cancelled</span></span>
+        {% endif %}
+        {% if agg.expired %}
+        <span class="stat stat-warn"><strong>{{ agg.expired }}</strong><span class="stat-label">expired</span></span>
+        {% endif %}
+        {% for name, n in agg.outcomes.items() %}
+        <span class="stat"><strong>{{ n }}</strong><span class="stat-label">{{ name }}</span></span>
+        {% endfor %}
+      </p>
+    </header>
+
+    {# hx-preserve: the block is re-rendered every 3s by polling; without this,
+       each swap would repaint the server-side fallback "Times shown in
+       UTC." overwriting the text that app.js already rewrote to local time. #}
+    {% if executions %}{% with tz_note_id = "tz-note-executions" %}{% include "_tz_note.html" %}{% endwith %}{% endif %}
+
+    <figure class="table-wrap executions-table-wrap">
+    <table class="executions-table">
+      <thead>
+        <tr>
+          <th class="col-exec-attempt" title="Attempt index counted per (task, worker) pair, not globally over the task. Two attempts on different workers can both show #1.">Attempt</th>
+          <th class="col-exec-worker">Worker</th>
+          <th class="col-exec-status">Status</th>
+          <th class="col-exec-started">Started</th>
+          <th class="col-exec-finished">Finished</th>
+          <th class="col-exec-duration">Duration</th>
+          <th class="col-exec-exit">Exit</th>
+          <th class="col-exec-output"><span class="visually-hidden">Output</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in executions %}
+        {% set _is_latest = latest_attempt is not none and e.attempt_index == latest_attempt %}
+        <tr class="execution-row{% if _is_latest %} execution-row-latest{% endif %}">
+          <td class="col-exec-attempt">
+            <span class="exec-attempt-num">#{{ e.attempt_index if e.attempt_index is not none else '?' }}</span>
+            {% if _is_latest %}
+              <span class="exec-attempt-latest" title="Most recent attempt">latest</span>
+            {% endif %}
+          </td>
+          <td class="col-exec-worker">
+            <a class="exec-worker-link"
+               href="/admin/workers/{{ e.worker_id }}"
+               title="{{ e.worker_hostname or e.worker_id }}">
+              {% if e.worker_hostname %}
+                <span class="exec-worker-host">{{ e.worker_hostname }}</span>
+                <code class="exec-worker-id">{{ e.worker_id[:8] }}</code>
+              {% else %}
+                <code class="exec-worker-id">{{ e.worker_id[:8] }}</code>
+              {% endif %}
+            </a>
+          </td>
+          <td class="col-exec-status"><span class="badge badge-{{ e.status }}">{{ e.status }}</span>{% if e.outcome %} <span class="badge badge-outcome">{{ e.outcome }}</span>{% endif %}</td>
+          <td class="col-exec-started">
+            {% if e.started_at %}
+              {{ ts(e.started_at, 'datetime') }}
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td class="col-exec-finished">
+            {% if e.finished_at %}
+              {{ ts(e.finished_at, 'datetime') }}
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td class="col-exec-duration">
+            {% if e.duration_seconds is not none %}
+              <span class="exec-duration">{{ e.duration_seconds | duration_human }}</span>
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td class="col-exec-exit">
+            {% if e.exit_code is not none %}
+              <code class="exec-exit-code exec-exit-{{ 'ok' if e.exit_code == 0 else 'err' }}">{{ e.exit_code }}</code>
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td class="col-exec-output">
+            {# Each attempt has a stable UUID (migration 0014),
+               so we link to /admin/executions/<uuid>/output to
+               reach the output of any historical attempt without the
+               ambiguity of (task_id, worker_id). #}
+            <a class="exec-output-link"
+               href="/admin/executions/{{ e.id }}/output">
+              output →
+            </a>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="8" class="muted empty-row">
+            {# The flex lives in this inner div, not in the <td>: putting display:flex
+               directly on the cell overrides display:table-cell and breaks the colspan
+               (the cell collapses to the width of the first column). #}
+            <div class="executions-empty">
+              <span class="executions-empty-title">No executions yet</span>
+              <span class="executions-empty-hint">Attempts will appear here once a worker claims this task.</span>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </figure>
+  </section>
+</div>
+
+{% include "_execution_artifacts.html" %}
+
+{# Forks: direct children of this task (parent_task_id points
+   here). Only one level. If there are no children we show "Forks (0)" discreetly,
+   consistent with the other sections that always render their header. #}
+<section class="executions-block forks-block" aria-label="Forks">
+  <header class="executions-head">
+    <h2>Forks ({{ fork_children_count }})</h2>
+  </header>
+  {% if fork_children %}
+  {# No hx-preserve: this Forks section is outside the <div hx-get="/admin/tasks/{{ task.id }}"
+     hx-trigger="every 3s" ...> above (which only covers #executions-block and its
+     hx-select-oob), so it is never re-rendered by polling and there is no need to pin
+     the local text with id/hx-preserve. #}
+  {% include "_tz_note.html" %}
+  <figure class="table-wrap forks-table-wrap">
+  <table class="executions-table">
+    <thead>
+      <tr>
+        <th class="col-fork-id">ID</th>
+        <th class="col-fork-status">Status</th>
+        <th class="col-fork-created">Created</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in fork_children %}
+      <tr class="execution-row">
+        <td class="col-fork-id">
+          <a href="/admin/tasks/{{ c.id }}">#{{ c.id }}</a>
+        </td>
+        <td class="col-fork-status"><span class="badge badge-{{ c.status }}">{{ c.status }}</span></td>
+        <td class="col-fork-created">
+          {% if c.created_at %}
+            {{ ts(c.created_at, 'datetime') }}
+          {% else %}
+            <span class="muted">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </figure>
+  {# There is no `parent` filter in the tasks listing nor a clean route
+     for "view all", so instead of inventing routes we show how many are
+     listed out of the total when there are more than the limit. #}
+  {% if fork_children_count > fork_children_limit %}
+  <p class="muted forks-overflow">Showing first {{ fork_children_limit }} of {{ fork_children_count }}</p>
+  {% endif %}
+  {% endif %}
+</section>
+
+{% include "_new_task_modal.html" %}
+{% endblock %}

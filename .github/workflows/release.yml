@@ -1,0 +1,132 @@
+# Release of Orcaster, started by a tag `v*`: ONE GitHub release per version
+# with every component as an asset, named after its component:
+#   orcaster-server-X.Y.Z.tar.gz                server bundle (Debian 13 installer)
+#   orcaster-worker-X.Y.Z.tar.gz                worker bundle (install-release.sh)
+#   orcaster_worker-X.Y.Z-py3-none-any.whl      worker wheel (pip name)
+#   orcaster-cli-X.Y.Z-<os>-<arch>.tar.gz|.zip  CLI binaries, each with an SBOM
+#   orcaster-X.Y.Z-checksums.txt                SHA-256 of every asset
+# The release process is documented in docs/releasing.md; run
+# ops/release/dry-run.sh to build all of it locally without publishing.
+#
+# A release has two tags at one commit (ops/release/tag-release.sh):
+#   vX.Y.Z           the release number of the whole system (server, worker,
+#                    dashboard and client share one version); starts this
+#                    workflow and names the GitHub release;
+#   orcaster/vX.Y.Z  the version of the Go module in orcaster/, which
+#                    `go install github.com/AInvirion/orcaster/orcaster@vX.Y.Z`
+#                    resolves. The job fails when it is missing or elsewhere.
+#
+# Only AInvirion/orcaster publishes the official release: the job is skipped
+# in any other repository that carries the same tags.
+#
+# Before publishing, the job checks that the tag, server/pyproject.toml and
+# client/pyproject.toml carry one version, checks the licences of the module
+# graph against the allowlist and the THIRD_PARTY notice, builds the server and
+# worker assets and a CLI snapshot, and checks every asset name, the archive
+# contents and the checksums file. The release notes are one section per
+# component (ops/release/release-body.md) followed by the `## [X.Y.Z]` section
+# of CHANGELOG.md.
+#
+# Every CLI archive gets an SPDX SBOM (syft, through the `sboms:` section of
+# .goreleaser.yaml). After publishing, the job writes a GitHub artifact
+# attestation (signed build provenance) for every asset; verify one with
+#   gh attestation verify <file> -R AInvirion/orcaster
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# No permissions by default; only the job that publishes the release can write.
+permissions: {}
+
+jobs:
+  goreleaser:
+    name: goreleaser
+    # Only AInvirion/orcaster publishes the official binaries; in a fork that
+    # carries the same tags this job is skipped.
+    if: github.repository == 'AInvirion/orcaster'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Artifact attestations: the OIDC token signs them and they are stored
+      # in the repository.
+      id-token: write
+      attestations: write
+    env:
+      # Two tags point at the release commit; the version is the one that
+      # started the workflow, never orcaster/vX.Y.Z.
+      GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check the Go module tag
+        # orcaster/vX.Y.Z versions the Go module for `go install`; it must point
+        # at the commit of the release tag (ops/release/tag-release.sh pushes both).
+        run: ops/release/check-tags.sh "${GITHUB_REF_NAME}" "${GITHUB_SHA}"
+
+      - name: Set up Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: orcaster/go.mod
+          cache-dependency-path: orcaster/go.sum
+
+      - name: Check licences of the module graph
+        run: |
+          go install github.com/google/go-licenses/v2@v2.0.1
+          ops/release/check-licenses.sh
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Build server and worker assets
+        # Fails unless the tag, server/pyproject.toml and client/pyproject.toml
+        # carry one version. GoReleaser adds every file of the directory to the
+        # release and to its checksums file (ORCASTER_COMPONENTS_DIR, outside
+        # the checkout so the tree stays clean).
+        run: |
+          echo "ORCASTER_COMPONENTS_DIR=${RUNNER_TEMP}/components" >> "${GITHUB_ENV}"
+          ops/release/build-components.sh "${GITHUB_REF_NAME}" "${RUNNER_TEMP}/components"
+
+      - name: Release notes (components + CHANGELOG.md)
+        run: ops/release/release-body.sh "${GITHUB_REF_NAME}" CHANGELOG.md > "${RUNNER_TEMP}/release-notes.md"
+
+      - name: Install syft (SBOM generator)
+        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+
+      - name: Build snapshot archives
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean
+          workdir: orcaster
+
+      - name: Check release assets
+        run: ops/release/check-archives.sh orcaster/dist "${GITHUB_REF_NAME}" "${ORCASTER_COMPONENTS_DIR}"
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean --release-notes ${{ runner.temp }}/release-notes.md
+          workdir: orcaster
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attest build provenance
+        # Artifact attestations on a private repository need GitHub Enterprise
+        # Cloud; skip the step until the repository is public, so a release cut
+        # while it is still private does not fail after publishing.
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            orcaster/dist/orcaster-cli-*.tar.gz
+            orcaster/dist/orcaster-cli-*.zip
+            orcaster/dist/*.sbom.json
+            orcaster/dist/orcaster-*-checksums.txt
+            ${{ env.ORCASTER_COMPONENTS_DIR }}/*

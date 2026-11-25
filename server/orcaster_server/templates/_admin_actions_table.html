@@ -1,0 +1,37 @@
+{% from "_macros.html" import ts %}
+<table>
+  <thead>
+    <tr>
+      <th>When</th><th>Action</th><th>Target</th>
+      <th>Reason</th><th>Actor</th><th>Payload</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for a in actions %}
+    <tr>
+      <td class="muted">{{ ts(a.ts, 'datetime') }}</td>
+      <td><span class="badge badge-{{ a.action }}">{{ a.action }}</span></td>
+      <td>
+        {% if a.target_kind == "worker" %}
+          worker <code>{{ a.target_id[:8] }}</code>
+        {% elif a.target_kind == "task" %}
+          <a href="/admin/tasks/{{ a.target_id }}">task #{{ a.target_id }}</a>
+        {% else %}
+          <code>{{ a.target_kind }}:{{ a.target_id }}</code>
+        {% endif %}
+      </td>
+      <td>{{ a.reason or "-" }}</td>
+      <td class="muted">{{ a.actor or "-" }}</td>
+      <td>
+        {% if a.payload %}
+        <code class="payload">{{ a.payload | tojson }}</code>
+        {% else %}
+        <span class="muted">-</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="muted">No admin actions recorded yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
