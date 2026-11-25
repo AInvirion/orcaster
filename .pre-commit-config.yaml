@@ -1,0 +1,57 @@
+# pre-commit hooks that run the same checks as CI before each commit.
+#   pip install pre-commit   (or: uv tool install pre-commit)
+#   pre-commit install
+#   pre-commit run --all-files
+# ruff runs through `uv run --extra dev` in server/ and client/, so it uses the
+# version pinned in each uv.lock, the same one CI uses (without `--extra dev`
+# uv falls back to any ruff on PATH).
+# Files that are byte-exact on purpose: vendored bundles (their sha256 is
+# recorded in VENDORED.md), test fixtures and golden files, and captured logs.
+exclude: |
+  (?x)^(
+    server/orcaster_server/static/.*\.min\.js
+    |.*/testdata/.*
+    |.*\.golden
+    |.*\.log
+  )$
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+
+  - repo: local
+    hooks:
+      - id: ruff-server
+        name: ruff (server)
+        entry: uv run --project server --extra dev ruff check --fix
+        language: system
+        types: [python]
+        files: ^server/
+      - id: ruff-format-server
+        name: ruff format (server)
+        entry: uv run --project server --extra dev ruff format
+        language: system
+        types: [python]
+        files: ^server/
+      - id: ruff-client
+        name: ruff (client)
+        entry: uv run --project client --extra dev ruff check --fix
+        language: system
+        types: [python]
+        files: ^client/
+      - id: ruff-format-client
+        name: ruff format (client)
+        entry: uv run --project client --extra dev ruff format
+        language: system
+        types: [python]
+        files: ^client/
+      - id: gofmt
+        name: gofmt
+        # gofmt -l lists files that need formatting; any output fails.
+        entry: bash -c 'out="$(gofmt -l "$@")"; [ -z "$out" ] || { echo "$out"; echo "run gofmt -w on the files above"; exit 1; }' --
+        language: system
+        types: [go]

@@ -1,0 +1,54 @@
+{# Aggregate progress bar. Shared by the public status page
+   (_status_summary.html) and the admin dashboard (_tasks_table.html, via OOB on
+   #tasks-progress). Receives `progress`: a StatusSnapshot or an
+   orcaster_server.status.snapshot.Progress (same field names). Optional:
+   `progress_scope_note`, a note under the bar (e.g. filters that do not
+   apply). Each page sets the size: status.html inline, app.css
+   compact in the dashboard. UI in English. #}
+<section class="progress-hero" aria-label="Overall progress">
+  {% if progress.progress_denominator == 0 %}
+  <p class="progress-empty">No tasks yet</p>
+  {% else %}
+  {# "Processed" hero = completed + failed, with a readable breakdown. The
+     bar stacks three full-width layers scaled with scaleX (never width, no
+     reflow on poll): pending is the neutral base, failed scales to the total
+     processed and completed paints its own fraction on top -- the visible part of the
+     red is exactly the failed portion, without translate or gaps. #}
+  <div class="progress-hero-head">
+    <span class="progress-copy">
+      <strong>{{ progress.processed_count }}</strong> of
+      <strong>{{ progress.progress_denominator }}</strong> tasks processed
+      (<strong>{{ progress.completed_count }}</strong> completed &middot;
+      <strong>{{ progress.failed_count }}</strong> failed)
+    </span>
+    <span class="progress-pct">{{ progress.processed_pct }}%</span>
+  </div>
+  <div class="progress-bar" role="progressbar"
+       aria-valuenow="{{ progress.processed_pct }}" aria-valuemin="0" aria-valuemax="100"
+       aria-label="Processed {{ progress.processed_count }} of {{ progress.progress_denominator }} tasks: {{ progress.completed_count }} completed, {{ progress.failed_count }} failed">
+    {# The layers scale with the CAPPED pcts (99.9 max while work is pending):
+       completed uses progress_pct and the failed underlay uses processed_pct,
+       so the bar never LOOKS full while work remains. #}
+    <div class="progress-segment segment-pending"></div>
+    {# |round(3): float division (99.9/100) carries binary noise
+       (0.9990000000000001); 3 decimals suffice for pcts with 1 decimal. #}
+    {# stable ids: htmx settles `style` between swaps of elements with the
+       same id, so the scaleX transition animates on every poll. A single
+       bar per page (status page or dashboard): they do not collide.
+       `inline_pct` is passed only by the status page (its CSP allows `style=` and it does not
+       load app.js); /admin paints --pct from `data-pct` via CSSOM. #}
+    <div id="progress-segment-failed" class="progress-segment segment-failed"
+         {%- if inline_pct %} style="--pct: {{ (progress.processed_pct / 100) | round(3) }};"{% endif %}
+         data-pct="{{ (progress.processed_pct / 100) | round(3) }}"></div>
+    <div id="progress-segment-completed" class="progress-segment segment-completed"
+         {%- if inline_pct %} style="--pct: {{ (progress.progress_pct / 100) | round(3) }};"{% endif %}
+         data-pct="{{ (progress.progress_pct / 100) | round(3) }}"></div>
+  </div>
+  {% if progress.processed_pct == 100.0 %}
+  <p class="progress-note">All tasks processed</p>
+  {% endif %}
+  {% endif %}
+  {% if progress_scope_note %}
+  <p class="progress-note progress-scope-note">{{ progress_scope_note }}</p>
+  {% endif %}
+</section>

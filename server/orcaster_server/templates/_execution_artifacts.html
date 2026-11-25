@@ -1,0 +1,46 @@
+{% from "_macros.html" import ts %}
+{# Artifacts of the latest attempt. A concept distinct from the log: these
+   are real files that the task produced. Texts in English (UI convention).
+
+   Collected: the row survives as evidence that the task
+   DID produce the file, but its bytes were purged from disk after being
+   backed up in the KB. They are listed without a download link (the endpoint answers
+   410) and with a badge + date. The zip is only offered if something downloadable remains. #}
+{% set downloadable = latest_artifacts | rejectattr('collected_at') | list %}
+<section id="artifacts-block" class="artifacts-block" aria-label="Artifacts">
+  <header class="artifacts-head">
+    <h2 class="artifacts-title">Artifacts</h2>
+    {% if latest_artifacts and latest_artifacts | length > 1 and downloadable and latest_execution_id %}
+      <a class="artifacts-zip-link"
+         href="/admin/executions/{{ latest_execution_id }}/artifacts.zip">
+        Download all (zip)
+      </a>
+    {% endif %}
+  </header>
+  {% if latest_artifacts %}
+    <p class="artifacts-summary muted">
+      Produced by the latest attempt (#{{ latest_attempt }}).
+    </p>
+    <ul class="artifacts-list">
+      {% for a in latest_artifacts %}
+        <li class="artifact-item">
+          {% if a.collected_at %}
+            <span class="artifact-cell">
+              <span class="artifact-name">{{ a.rel_path }}</span>
+              <span class="badge" title="Bytes purged after being backed up to external storage">Collected</span>
+              <span class="artifact-collected-at muted">{{ ts(a.collected_at, 'compact') }}</span>
+            </span>
+          {% else %}
+            <a class="artifact-link"
+               href="/admin/executions/{{ latest_execution_id }}/artifacts/{{ a.id }}/download">
+              {{ a.rel_path }}
+            </a>
+          {% endif %}
+          <span class="artifact-size muted">{{ (a.size_bytes / 1024) | round(1) }} KB</span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="artifacts-empty muted">No artifacts produced by this task.</p>
+  {% endif %}
+</section>

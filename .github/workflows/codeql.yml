@@ -1,0 +1,66 @@
+# CodeQL code scanning of the Python (server, worker), Go (orcaster CLI) and
+# JavaScript (dashboard) sources. Results appear under Security, Code scanning.
+#
+# Every `uses:` is pinned to a full commit SHA with the tag as a comment, like
+# the other workflows.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, so new queries run over code that has not changed.
+    - cron: "27 4 * * 1"
+
+permissions: {}
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    # Results go to code scanning, which a private repository without GitHub
+    # Advanced Security does not have (the upload fails with 403).
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: python
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          # The Go module lives in orcaster/, so it is built by hand.
+          - language: go
+            build-mode: manual
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: orcaster/go.mod
+          cache-dependency-path: orcaster/go.sum
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Build the Go module
+        if: matrix.build-mode == 'manual'
+        working-directory: orcaster
+        run: go build ./...
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: "/language:${{ matrix.language }}"

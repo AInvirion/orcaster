@@ -1,0 +1,25 @@
+{# Options of the variant lens selector. Shared by the admin
+   dashboard, the failures page and the public status page so the three
+   surfaces offer the SAME vocabulary. Only <option>/<optgroup>: the
+   <select> (with its HTMX or form attributes) is provided by each surface.
+
+   Expected context:
+   - `variant_options`: dict from build_variant_options (tools[].versions[], has_other).
+   - `selected_variant`: selected token. '' or 'current' = default (current).
+
+   The value of the exact pair is `<kind>~<label>` (e.g. `example-tool~1.2.3`);
+   the form/HTMX URL-encodes it and the backend splits it on `~`. The `kind` mode
+   (whole tool) is URL-only: it is not offered as an option so as not to overload
+   the selector with one row per tool. #}
+<option value="current"{% if selected_variant in ('', 'current') %} selected{% endif %}>Current</option>
+<option value="all"{% if selected_variant == 'all' %} selected{% endif %}>All versions</option>
+{% for tool in variant_options.tools %}
+<optgroup label="{{ tool.kind }}">
+  {% for v in tool.versions %}
+  <option value="{{ tool.kind }}~{{ v.label }}"{% if selected_variant == tool.kind ~ '~' ~ v.label %} selected{% endif %}>{{ v.label }}{% if v.is_current %} (current){% endif %} &middot; {{ v.count }}</option>
+  {% endfor %}
+</optgroup>
+{% endfor %}
+{% if variant_options.has_other %}
+<option value="other"{% if selected_variant == 'other' %} selected{% endif %}>Other</option>
+{% endif %}

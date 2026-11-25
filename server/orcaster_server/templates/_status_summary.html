@@ -1,0 +1,73 @@
+{# Aggregate block of the status page. Refreshed every 10s via HTMX polling.
+   All visible text in English. No sensitive data. Inherits the inline <style>
+   (Peltre tokens + components) of the parent status.html. #}
+{# The poll preserves the variant lens: the hx-get carries the selected
+   variant (URL-encoded; the label contains spaces and `/`). For "current" it becomes
+   `?variant=current`, which the backend resolves to the default. #}
+<div id="status-summary"
+     hx-get="/status/{{ token }}/summary?variant={{ snap.selected_variant | urlencode }}"
+     hx-trigger="every 10s"
+     hx-swap="outerHTML"
+     data-updated="now">
+
+  {# Progress bar shared with the admin dashboard. `progress`
+     accepts the snapshot: its fields match orcaster_server.status.snapshot.Progress. #}
+  {% with progress = snap, inline_pct = true %}{% include "_progress_hero.html" %}{% endwith %}
+
+  <section class="stat-row">
+    <div class="stat">
+      <strong>{{ snap.workers_online }}/{{ snap.workers|length }}</strong>
+      <span class="stat-label">Workers</span>
+    </div>
+    <div class="stat">
+      <strong>{{ snap.active_executions_now }}</strong>
+      <span class="stat-label">Active now</span>
+    </div>
+    <div class="stat">
+      <strong>{{ snap.tasks_by_status['queued'] }}</strong>
+      <span class="stat-label">Queued</span>
+    </div>
+    {# failed_count = tasks_by_status['failed'] as is (a close with an
+       outcome lives inside "completed"). Turns danger only when there are
+       real failures; at 0 it stays neutral. #}
+    <div class="stat{{ ' is-danger' if snap.failed_count > 0 else '' }}">
+      <strong>{{ snap.failed_count }}</strong>
+      <span class="stat-label">Failed</span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Tasks by status</h2>
+    <div class="chip-row">
+      {# 6 visible chips, one per tasks_by_status value. #}
+      {% for st in ['queued', 'dispatching', 'paused', 'completed', 'cancelled', 'failed'] %}
+      <span class="chip chip-{{ st }}">{{ st }} {{ snap.failed_count if st == 'failed' else snap.tasks_by_status[st] }}</span>
+      {% endfor %}
+    </div>
+    {% if snap.completed_outcomes %}
+    <p class="muted">
+      completed includes:
+      {% for name, n in snap.completed_outcomes %}{{ name }} {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}
+    </p>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>Worker fleet</h2>
+    {% if snap.workers %}
+    <ul class="fleet-list">
+      {% for w in snap.workers %}
+      <li class="fleet-row">
+        <span class="fleet-name">Worker {{ w.index }}</span>
+        <span class="fleet-meta">
+          <span class="badge badge-{{ w.status }}">{{ w.status }}</span>
+          <span class="fleet-active">{{ w.active_count }} active</span>
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="fleet-empty">No workers yet</p>
+    {% endif %}
+  </section>
+</div>

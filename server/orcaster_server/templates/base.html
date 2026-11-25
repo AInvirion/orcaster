@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{% block title %}Orcaster{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css?v=ts-local-58">
+  {# htmx config for the /admin CSP: no indicator <style> (app.css defines
+     .htmx-indicator) and no eval (no hx-on, no hx-trigger filters, no `js:` in
+     hx-vals), nor <script> in responses. No `style` in attributesToSettle: the
+     htmx settle would copy it with setAttribute('style'), which the CSP blocks;
+     the style of the bars is written by app.js through the CSSOM. #}
+  <meta name="htmx-config" content='{"includeIndicatorStyles": false, "allowEval": false, "allowScriptTags": false, "attributesToSettle": ["class", "width", "height"]}'>
+  {# Theme boot before the first paint (no FOUC): synchronous external script. #}
+  <script src="/static/theme-boot.js?v=csp-1"></script>
+  <script src="/static/htmx.min.js?v=2.0.10"></script>
+  <!-- idiomorph: diff-based swap (preserves <details open>, scroll, focus and
+       JS-added classes such as .task-highlight between htmx polls). Without
+       it, the innerHTML swap every 5s destroys live UI state.
+       Vendored from /static (no external CDN); ?v= = upstream version. -->
+  <script src="/static/idiomorph-ext.min.js?v=0.7.4"></script>
+  <!-- HTMX SSE extension: enables sse-connect/sse-swap and hx-trigger="sse:..."
+       for real-time dashboard push.
+       Vendored from /static (no external CDN); ?v= = upstream version. -->
+  <script src="/static/htmx-ext-sse.js?v=2.2.2"></script>
+  <script defer src="/static/app.js?v=ts-local-58"></script>
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  <header>
+    <nav>
+      <ul class="nav-brand">
+        <li><strong><a href="/admin/">Orcaster</a></strong></li>
+      </ul>
+      <details class="nav-collapse">
+        <summary class="nav-toggle" aria-label="Menu" title="Menu">
+          <span class="nav-toggle-bars" aria-hidden="true"></span>
+        </summary>
+        <ul class="nav-items">
+        {% if ws_active_name %}
+        <li class="ws-switcher">
+          {% if ws_memberships|length > 1 %}
+          <details class="ws-switcher-details" data-header-popover>
+            <summary class="ws-switcher-summary" aria-label="Switch workspace">
+              <span class="ws-switcher-label">Workspace</span>
+              <span class="ws-switcher-active">{{ ws_active_name }}</span>
+              <span class="ws-switcher-caret" aria-hidden="true">▾</span>
+            </summary>
+            <div class="ws-switcher-menu" role="menu">
+              {% for ws in ws_memberships %}
+              <form method="post" action="/admin/workspace/switch" class="ws-switcher-item-form">
+                <input type="hidden" name="workspace_id" value="{{ ws.id }}">
+                <button type="submit" class="ws-switcher-item"
+                        role="menuitem"
+                        {% if ws.id == ws_active_id %}aria-current="true" disabled{% endif %}>
+                  <span class="ws-switcher-check" aria-hidden="true">{% if ws.id == ws_active_id %}✓{% endif %}</span>
+                  <span class="ws-switcher-name">{{ ws.name }}</span>
+                </button>
+              </form>
+              {% endfor %}
+            </div>
+          </details>
+          {% else %}
+          <span class="ws-switcher-solo" title="Active workspace">
+            <span class="ws-switcher-label">Workspace</span>
+            <span class="ws-switcher-active">{{ ws_active_name }}</span>
+          </span>
+          {% endif %}
+        </li>
+        {% endif %}
+        {% if artifact_indicator_enabled() %}
+        {# morph:innerHTML (not plain innerHTML): keeps the .tele-pop popover
+           open between 30s polls — see app.js configureIdiomorph. Skeleton
+           until the first load so the layout is not pushed. #}
+        <li id="artifact-indicator" class="artifact-indicator"
+            hx-ext="morph"
+            hx-get="/admin/artifact-indicator" hx-trigger="load, every 30s"
+            hx-swap="morph:innerHTML">
+          <span class="tele-skeleton tele-skeleton--artifact" aria-hidden="true"></span>
+        </li>
+        {% endif %}
+        <li id="storage-indicator" class="storage-indicator"
+            hx-ext="morph"
+            hx-get="/admin/storage" hx-trigger="load, every 30s"
+            hx-swap="morph:innerHTML">
+          <span class="tele-skeleton tele-skeleton--storage" aria-hidden="true"></span>
+        </li>
+        <li class="nav-zone-start"><a href="/admin/workspaces">Workspaces</a></li>
+        <li><a href="/admin/pats">Tokens</a></li>
+        <li><a href="/admin/secrets">Secrets</a></li>
+        <li><a href="/admin/share-links">Share links</a></li>
+        <li><a href="/admin/actions">Audit log</a></li>
+        <li><a href="/admin/outcomes">Outcomes</a></li>
+        <li>
+          <button id="theme-toggle" type="button" class="theme-toggle"
+                  aria-label="Toggle theme (light/dark)"
+                  title="Toggle theme">
+            <span class="theme-toggle-icon theme-toggle-sun" aria-hidden="true">☀</span>
+            <span class="theme-toggle-icon theme-toggle-moon" aria-hidden="true">☾</span>
+          </button>
+        </li>
+        {% if user_display_name %}
+        <li class="user-menu">
+          <details class="user-menu-details" data-header-popover>
+            <summary class="user-menu-summary" aria-label="Account menu"
+                     title="{{ user_display_name }}">
+              <span class="user-menu-avatar" aria-hidden="true">
+                {{ user_display_name[0]|upper }}
+              </span>
+              <span class="user-menu-name">{{ user_display_name }}</span>
+              <span class="user-menu-caret" aria-hidden="true">▾</span>
+            </summary>
+            <div class="user-menu-popover" role="menu">
+              {% if server_version %}
+              {# About: only the server version. It is not an actionable item
+                 (role="none"): it informs, it does not navigate. Each worker's
+                 version lives in its own component (the deck and the worker
+                 detail), not as an aggregated fleet summary here. #}
+              <div class="user-menu-about" role="none">
+                <span class="user-menu-about-label">About</span>
+                <code class="user-menu-about-version">v{{ server_version }}</code>
+              </div>
+              <hr class="user-menu-divider" role="none">
+              {% endif %}
+              <form method="post" action="/auth/logout" class="user-menu-form">
+                <button type="submit" class="user-menu-item" role="menuitem">
+                  Sign out
+                </button>
+              </form>
+            </div>
+          </details>
+        </li>
+        {% endif %}
+        </ul>
+      </details>
+    </nav>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- Reusable confirm dialog. Replaces the native window.confirm()/prompt()
+       when an element carries data-confirm. The JS activates it on
+       htmx:confirm (for hx-post/hx-delete) and on click (for buttons without
+       htmx). It is rendered only once per page. -->
+  <dialog id="confirm-dialog" aria-labelledby="confirm-dialog-title"
+          class="confirm-dialog">
+    <article>
+      <header>
+        <h2 id="confirm-dialog-title" class="confirm-dialog-title"></h2>
+      </header>
+      <form method="dialog" class="confirm-dialog-form">
+        <p id="confirm-dialog-message" class="confirm-dialog-message"></p>
+        <div id="confirm-dialog-reason-wrap" class="confirm-dialog-reason hidden">
+          <label for="confirm-dialog-reason"
+                 id="confirm-dialog-reason-label">Reason (optional)</label>
+          <textarea id="confirm-dialog-reason" rows="2"
+                    placeholder="Explain why (logged to audit)"></textarea>
+        </div>
+        <footer class="confirm-dialog-footer">
+          <button type="button" class="btn-secondary"
+                  data-confirm-cancel>Cancel</button>
+          <button type="submit" id="confirm-dialog-ok"
+                  class="confirm-dialog-ok">Confirm</button>
+        </footer>
+      </form>
+    </article>
+  </dialog>
+</body>
+</html>

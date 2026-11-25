@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Status unavailable</title>
+  <style>
+    /* Same Peltre token block as status.html (verbatim); see that file for
+       the full comment on the dark-default / @media (prefers-color-scheme:
+       light) strategy without a toggle. */
+    :root {
+      color-scheme: dark;
+      --hue: 220;
+
+      --bg:            oklch(15% 0.011 var(--hue));
+      --surface:       oklch(19% 0.013 var(--hue));
+      --surface-2:     oklch(24% 0.015 var(--hue));
+      --surface-3:     oklch(28% 0.017 var(--hue));
+      --border:        oklch(30% 0.017 var(--hue));
+      --border-strong: oklch(40% 0.019 var(--hue));
+      --text:          oklch(92% 0.011 var(--hue));
+      --text-muted:    oklch(68% 0.013 var(--hue));
+      --text-faint:    oklch(55% 0.011 var(--hue));
+
+      --accent:        oklch(70% 0.14 195);
+      --accent-hover:  oklch(76% 0.15 195);
+      --accent-fg:     oklch(15% 0.015 195);
+      --focus-ring:    oklch(80% 0.16 195 / 0.5);
+
+      --danger-bg: oklch(30% 0.12 25);
+      --danger-fg: oklch(88% 0.1 25);
+
+      --shadow-1: 0 1px 2px oklch(5% 0.01 var(--hue) / 0.5);
+      --shadow-2: 0 6px 22px oklch(5% 0.01 var(--hue) / 0.55);
+
+      --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+                   Roboto, Helvetica, Arial, sans-serif;
+      --fs-xs:  0.75rem;
+      --fs-sm:  0.85rem;
+      --fs-base: 0.95rem;
+      --fs-2xl: 1.85rem;
+      --lh-base: 1.55;
+
+      --sp-2: 0.5rem; --sp-3: 0.75rem; --sp-4: 1rem;
+      --sp-6: 1.5rem; --sp-8: 2rem;
+
+      --radius:    6px;
+      --radius-lg: 10px;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        color-scheme: light;
+        --bg:            oklch(99% 0.004 var(--hue));
+        --surface:       oklch(98% 0.007 var(--hue));
+        --surface-2:     oklch(95.5% 0.009 var(--hue));
+        --surface-3:     oklch(93% 0.011 var(--hue));
+        --border:        oklch(89% 0.011 var(--hue));
+        --border-strong: oklch(80% 0.014 var(--hue));
+        --text:          oklch(22% 0.018 var(--hue));
+        --text-muted:    oklch(50% 0.013 var(--hue));
+        --text-faint:    oklch(65% 0.011 var(--hue));
+
+        --accent:        oklch(54% 0.13 195);
+        --accent-hover:  oklch(48% 0.14 195);
+        --accent-fg:     oklch(98% 0.01 195);
+        --focus-ring:    oklch(70% 0.15 195 / 0.45);
+
+        --danger-bg: oklch(92% 0.06 25);
+        --danger-fg: oklch(40% 0.18 25);
+
+        --shadow-1: 0 1px 2px oklch(20% 0.03 var(--hue) / 0.06);
+        --shadow-2: 0 4px 14px oklch(20% 0.03 var(--hue) / 0.10);
+      }
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      font-size: var(--fs-base);
+      line-height: var(--lh-base);
+      -webkit-font-smoothing: antialiased;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: var(--sp-8);
+    }
+    .status-404 {
+      max-width: 420px;
+      width: 100%;
+      text-align: center;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-1);
+      padding: var(--sp-8);
+    }
+    .status-404 .badge {
+      display: inline-block;
+      padding: 0.15rem 0.7rem;
+      border-radius: 999px;
+      font-size: var(--fs-xs);
+      font-weight: 650;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      background: var(--danger-bg);
+      color: var(--danger-fg);
+      margin-bottom: var(--sp-4);
+    }
+    .status-404 h1 {
+      font-size: var(--fs-2xl);
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      margin: 0 0 var(--sp-3);
+    }
+    .status-404 p {
+      margin: 0;
+      color: var(--text-muted);
+    }
+    .status-404 .mark {
+      margin-top: var(--sp-6);
+      color: var(--text-faint);
+      font-size: var(--fs-sm);
+    }
+  </style>
+</head>
+<body>
+  <main class="status-404">
+    <span class="badge">unavailable</span>
+    <h1>Status page unavailable</h1>
+    <p>This link is no longer active or was revoked.</p>
+    <p class="mark">AInvirion</p>
+  </main>
+</body>
+</html>

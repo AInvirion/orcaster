@@ -1,0 +1,369 @@
+{% from "_macros.html" import ts %}
+{# Sort UI helpers. `sort` and `dir` are emitted by the backend with a whitelist; we
+   use them to paint the right indicator without more logic in JS. #}
+{% set _sort = sort if sort is defined else "created_at" %}
+{% set _dir  = dir  if dir  is defined else "desc" %}
+{% macro sort_header(label, col, classes="", title="") -%}
+  {% set is_active = (_sort == col) %}
+  {% set next_dir = "asc" if (is_active and _dir == "desc") else "desc" %}
+  {% set aria = "ascending" if (is_active and _dir == "asc") else ("descending" if is_active else "none") %}
+  <th class="{{ classes }} col-sortable{% if is_active %} is-sorted is-sorted--{{ _dir }}{% endif %}"
+      aria-sort="{{ aria }}"
+      {% if title %}title="{{ title }}"{% endif %}>
+    <button type="button" class="th-sort-btn"
+            data-sort-col="{{ col }}"
+            data-next-dir="{{ next_dir }}"
+            hx-get="/admin/tasks"
+            hx-target="#tasks-panel"
+            hx-swap="morph:innerHTML"
+            hx-include="#filter-form"
+            hx-vals='{"sort": "{{ col }}", "dir": "{{ next_dir }}"}'
+            aria-label="Sort by {{ label }} ({{ next_dir }}ending)">
+      <span class="th-sort-label">{{ label }}</span>
+      <span class="sort-indicator" aria-hidden="true">{%- if is_active -%}{%- if _dir == "asc" -%}▲{%- else -%}▼{%- endif -%}{%- else -%}▾{%- endif -%}</span>
+    </button>
+  </th>
+{%- endmacro %}
+{# Dismissible chips for active filters. We only render the wrap when
+   there is at least one chip; with no filters there must be no empty slot. Each chip is
+   an <a> hx-get to the same endpoint with its param removed. We preserve the
+   other params (remaining status, q, sort, dir) via remove_qs precomputed
+   in the endpoint. #}
+{% if active_filter_chips %}
+<div class="active-filters" aria-label="Active filters">
+  {% for chip in active_filter_chips %}
+  <a class="active-filter-chip"
+     href="/admin/{% if chip.remove_qs %}?{{ chip.remove_qs }}{% endif %}"
+     hx-get="/admin/tasks{% if chip.remove_qs %}?{{ chip.remove_qs }}{% endif %}"
+     hx-target="#tasks-panel"
+     hx-swap="morph:innerHTML"
+     aria-label="Remove filter {{ chip.label }} {{ chip.value }}"
+     title="Remove filter">
+    <span class="active-filter-chip-key">{{ chip.label }}:</span>
+    <span class="active-filter-chip-val">{% if chip.label == "q" %}"{{ chip.value }}"{% else %}{{ chip.value }}{% endif %}</span>
+    <span class="active-filter-chip-x" aria-hidden="true">×</span>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+{# Inline counter in the header subtitle. Travels out-of-band on every
+   swap of #tasks-panel so the header and the table never disagree.
+   - With active filters: "4 of 153" (contract preserved -- the operator is already
+     in "reduced scope" mode, the global breakdown would distract).
+   - No filters, 100% green: "N completed" (every task in completed state;
+     the big number loses meaning as a thermometer). failed/cancelled are
+     terminal but NOT successful: if they exist, we do NOT collapse to "completed" --
+     we fall back to the breakdown so as not to lie about the fleet state.
+   - No filters, mixed fleet: breakdown per non-zero bucket, ordered by
+     operational urgency (failed > queued > dispatching > paused > completed
+     > cancelled), capped to 4. If there are more, "·..." is appended. Each number is
+     informative, not alarming: very soft semantic tint; the status
+     chip is the "loud" affordance, this is calm telemetry.
+   The initial empty span lives in dashboard.html and is filled in the first
+   polling response (about load + 50ms). #}
+<span id="tasks-subtitle" class="page-subtitle" hx-swap-oob="true">
+  <span class="page-subtitle-sep" aria-hidden="true">·</span>
+  {% if active_filters %}
+    <strong>{{ filtered_count }}</strong> of {{ total_count }}
+  {% elif all_completed %}
+    <strong>{{ total_count }}</strong> completed
+  {% elif subtitle_buckets %}
+    {% for b in subtitle_buckets %}
+      {% if not loop.first %}<span class="subtitle-sep" aria-hidden="true">·</span>{% endif %}
+      <span class="subtitle-bucket subtitle-bucket--{{ b.status }}">
+        <span class="subtitle-bucket-count">{{ b.count }}</span>
+        <span class="subtitle-bucket-label">{{ b.status }}</span>
+      </span>
+    {% endfor %}
+    {% if subtitle_buckets_overflow %}
+      <span class="subtitle-sep" aria-hidden="true">·</span>
+      <span class="subtitle-more" aria-label="more buckets">…</span>
+    {% endif %}
+  {% else %}
+    <strong>{{ total_count }}</strong> total
+  {% endif %}
+</span>
+{# Progress bar. Travels out-of-band on every swap of #tasks-panel,
+   like #tasks-subtitle, to the empty slot in dashboard.html. It follows the
+   version lens (like the status page); status/outcome/search/artifact do NOT
+   apply. `progress_scope_note` (admin_ui._progress_scope_note) always declares
+   the version measured, the cancelled tasks excluded from the total and, with active
+   filters, that they do not apply. #}
+<div id="tasks-progress" class="tasks-progress" hx-swap-oob="true">
+  {% include "_progress_hero.html" %}
+</div>
+<figure class="table-wrap tasks-table-wrap">
+<table class="tasks-table">
+  <thead>
+    <tr>
+      <th class="bulk-col">
+        <input type="checkbox" class="bulk-select-all" aria-label="Select all">
+      </th>
+      <th class="col-id">ID</th>
+      <th class="col-args">Payload</th>
+      {{ sort_header("Target", "target_count", "col-target") }}
+      {{ sort_header("Workers", "done", "col-runs", "Workers that completed this task / workers required") }}
+      <th class="col-runtime">Runtime</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for t in tasks %}
+    {% set _args = t.payload | args_pretty %}
+    {# Whole row clickable -> task detail (initRowNav in app.js).
+       There is no col-actions column: an inline Cancel duplicated the bulk bar and
+       the detail, and in mostly-terminal fleets it left an empty column.
+       .task-id-link remains the keyboard-accessible entry point;
+       data-href is the destination consumed by the click handler. #}
+    <tr id="task-row-{{ t.id }}" class="task-row"
+        data-href="/admin/tasks/{{ t.id }}">
+      <td class="bulk-col">
+        <input type="checkbox" class="bulk-task-cbx" value="{{ t.id }}"
+               aria-label="Select task {{ t.id }}">
+      </td>
+      <td class="col-id">
+        <a class="task-id-link" href="/admin/tasks/{{ t.id }}"
+           title="View task #{{ t.id }} details">#{{ t.id }}</a>
+        <span class="badge badge-{{ t.status }}"
+              title="{{ status_tooltips.get(t.status, '') }}">{{ t.status }}</span>
+        {# Outcome: terminal nuance declared by the task (e.g.
+           `no_result`). A badge separate from the status -- it is an additional
+           dimension, not a replacement (several `completed` tasks may have a
+           different outcome, or none). #}
+        {% if t.outcome %}
+        <span class="badge badge-outcome" title="Terminal outcome">{{ t.outcome }}</span>
+        {% endif %}
+        {# An `all_available` task in `dispatching` whose snapshot epoch has
+           no execution is not being dispatched: it is WAITING for an eligible
+           worker to come in (housekeeping re-snapshots it when one appears). Without this line the row is
+           indistinguishable from a fan-out in
+           progress. The specific reason -- no workers online vs. no capability --
+           is in the detail. #}
+        {% if t.awaiting_eligible %}
+        <div class="awaiting-inline" aria-label="Waiting for an eligible worker">
+          <span class="awaiting-mark" aria-hidden="true">⏳</span>
+          <a class="awaiting-link" href="/admin/tasks/{{ t.id }}"
+             title="No worker can run this task yet. Open the task to see why.">waiting for an eligible worker</a>
+        </div>
+        {% endif %}
+        {# Inline signal for failed: the badge already says "something broke"; this
+           says "what broke" in one line under the badge without an extra click.
+           Only applies to status == 'failed'; the signal comes from the latest
+           execution (highest assigned_at), same as the RUNTIME column. #}
+        {% if t.status == "failed" and (t.last_exit_code is not none or t.last_stderr_tail) %}
+        <div class="fail-inline" aria-label="Failure signal">
+          {% if t.last_exit_code is not none %}
+            <span class="fail-exit" title="Process exit code from the last execution">exit {{ t.last_exit_code }}</span>
+          {% endif %}
+          {% if t.last_stderr_tail %}
+            {% if t.last_exit_code is not none %}<span class="fail-sep" aria-hidden="true">·</span>{% endif %}
+            <span class="fail-stderr" title="{{ t.last_stderr_tail }}">{{ t.last_stderr_tail }}</span>
+          {% endif %}
+        </div>
+        {% endif %}
+        {# Fork lineage: if the task has a parent we show which task it
+           comes from, with a link to its detail. The "modified" mark indicates that the
+           fork changed params with respect to the parent (same signal as the detail,
+           via parent_params_changed). Same visual mould as .fail-inline:
+           sub-line under the badge. #}
+        {% if t.parent_task_id %}
+        <div class="fork-inline"
+             aria-label="Forked from task {{ t.parent_task_id }}">
+          <span class="fork-mark" aria-hidden="true">⑂</span> from
+          <a class="fork-parent-link" href="/admin/tasks/{{ t.parent_task_id }}"
+             title="View parent task #{{ t.parent_task_id }}">#{{ t.parent_task_id }}</a>
+          {% if t.parent_params_changed %}
+          <span class="fork-sep" aria-hidden="true">·</span>
+          <span class="fork-modified"
+                title="This fork changed parameters from its parent">modified</span>
+          {% endif %}
+        </div>
+        {% endif %}
+      </td>
+      <td class="col-args">
+        {% if _args %}
+          <code class="args-chip" title="{{ _args }}">{{ _args }}</code>
+        {% else %}
+          <span class="muted">—</span>
+        {% endif %}
+      </td>
+      <td class="col-target">
+        <span class="target-mode">{{ t.target_mode }}</span>
+        <span class="target-count">{{ t.target_count }}</span>
+      </td>
+      {% set _pct = (t.done / t.target_count) if t.target_count else 0 %}
+      {% if t.target_count and t.done >= t.target_count %}
+        {% set _tier = "done" %}
+      {% elif _pct >= 0.66 %}
+        {% set _tier = "high" %}
+      {% elif _pct >= 0.33 %}
+        {% set _tier = "mid" %}
+      {% else %}
+        {% set _tier = "low" %}
+      {% endif %}
+      {% set _workers = t.worker_labels or [] %}
+      {% set _workers_visible = _workers[:3] %}
+      {% set _workers_extra = (_workers | length) - (_workers_visible | length) %}
+      <td class="col-runs"
+          title="{{ t.done }} of {{ t.target_count }} workers completed this task">
+        {# Typical case (target_count == 1): show the label of the assigned
+           worker (Worker.name if present, else hostname). If there is no
+           execution yet we show "pending". The progress bar loses meaning
+           with a single worker, so we suppress it. For target_count > 1
+           we show fraction + bar and below it the first 3 labels with
+           "+N more" if there is overflow; the list tooltip carries the
+           full list so no signal is lost. #}
+        {% if t.target_count == 1 %}
+          {% if _workers %}
+            <span class="runs-single runs-single--{{ 'done' if t.done >= 1 else 'pending' }}"
+                  title="{{ 'Completed by ' if t.done >= 1 else 'Assigned to ' }}{{ _workers[0] }}">
+              {{ _workers[0] }}
+            </span>
+          {% else %}
+            <span class="runs-single runs-single--pending muted">pending</span>
+          {% endif %}
+        {% else %}
+        <span class="runs-fraction">
+          <strong>{{ t.done }}</strong><span class="runs-sep">/</span>{{ t.target_count }}
+        </span>
+        {# 2px visual progress. Width via custom prop --pct; idiomorph
+           preserves the node between polls, only the inline style and the
+           tier class change. We do NOT animate width (design system rule). We do transition
+           background-color when the tier goes up/down between renders. #}
+        {% if t.target_count %}
+        <span class="runs-progress" aria-hidden="true">
+          <span class="runs-progress-fill runs-progress-fill--{{ _tier }}"
+                data-pct="{{ '%.4f' | format(_pct) }}"></span>
+        </span>
+        {% endif %}
+        {% if _workers %}
+        <span class="runs-workers"
+              title="{{ _workers | join(', ') }}">
+          {% for w in _workers_visible %}
+            <span class="runs-worker">{{ w }}</span>
+          {% endfor %}
+          {% if _workers_extra > 0 %}
+            <span class="runs-worker-more">+{{ _workers_extra }} more</span>
+          {% endif %}
+        </span>
+        {% endif %}
+        {% endif %}
+      </td>
+      <td class="col-runtime"
+          data-runtime-state="{{ 'terminal' if (t.last_started_at and t.last_finished_at) else ('running' if t.last_started_at else 'none') }}">
+        {# Start -> end of the most recent execution. The server emits ISO UTC in
+           `datetime=` and a visible `dt_compact` fallback (UTC, "Mmm DD HH:MM");
+           app.js rewrites to adaptive local time (HH:MM today, "MMM DD HH:MM"
+           on another day) in htmx:load/afterSwap. The full UTC stays in `title`. #}
+        {% if t.last_started_at %}
+        <span class="runtime-range">
+          {{ ts(t.last_started_at, 'compact', 'runtime-start') }}
+          <span class="runtime-arrow" aria-hidden="true">→</span>
+          {% if t.last_finished_at %}
+          {{ ts(t.last_finished_at, 'compact', 'runtime-end') }}
+          {% else %}
+          <span class="runtime-running" aria-label="in progress">···</span>
+          {% endif %}
+        </span>
+        {% else %}
+        <span class="runtime-none">not started</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    {% if active_filters %}
+    <tr>
+      <td colspan="6" class="muted empty-row">
+        No tasks match these filters.
+        <button type="button" class="btn-secondary filter-clear-btn"
+                id="filter-clear-btn"
+                aria-label="Clear filters and return to the full list">
+          Clear filters
+        </button>
+      </td>
+    </tr>
+    {% else %}
+    <tr>
+      <td colspan="6" class="empty-row empty-row-no-tasks">
+        <div class="empty-state empty-state-tasks">
+          <p class="empty-state-title">No tasks yet.</p>
+          <button type="button" class="btn-secondary"
+                  id="empty-new-task-btn"
+                  data-open-new-task
+                  aria-label="Open the new task modal">
+            + New task
+          </button>
+        </div>
+      </td>
+    </tr>
+    {% endif %}
+    {% endfor %}
+  </tbody>
+</table>
+</figure>
+{# Pagination footer. Lives inside the innerHTML of #tasks-panel, which morphs
+   on every poll -> it always reflects the server's truth with no extra logic.
+   Prev/Next use hx-vals to send the correct page number without touching
+   the hidden inputs (app.js syncs them in parallel for the next poll).
+   The page_size select delegates to app.js (change event -> writes hidden). #}
+<nav class="pagination-footer" aria-label="Pagination">
+  {# native disabled (no redundant aria-disabled) already exposes the state and takes
+     the button out of the tab order; app.js restores focus to the actionable sibling on
+     reaching the edge. Decorative arrow in an aria-hidden span -> the accessible
+     name stays "Prev" (the glyph is not announced). #}
+  <button type="button"
+          class="btn-secondary pagination-prev"
+          data-page="{{ page - 1 }}"
+          hx-get="/admin/tasks"
+          hx-target="#tasks-panel"
+          hx-swap="morph:innerHTML"
+          hx-include="#filter-form"
+          hx-vals='{"page": "{{ page - 1 }}"}'
+          {% if not has_prev %}disabled{% endif %}>
+    <span aria-hidden="true">←</span>Prev
+  </button>
+  {# No aria-live: #tasks-panel morphs every 3s and total_pages changes with the
+     live fleet -> a live region would re-announce "Page X of Y" without user
+     action. Navigation is user-initiated; it needs no announcement. #}
+  <span class="pagination-indicator">
+    Page {{ page }} of {{ total_pages }}
+  </span>
+  <button type="button"
+          class="btn-secondary pagination-next"
+          data-page="{{ page + 1 }}"
+          hx-get="/admin/tasks"
+          hx-target="#tasks-panel"
+          hx-swap="morph:innerHTML"
+          hx-include="#filter-form"
+          hx-vals='{"page": "{{ page + 1 }}"}'
+          {% if not has_next %}disabled{% endif %}>
+    Next<span aria-hidden="true">→</span>
+  </button>
+  {# There is no visually-hidden <span>Rows</span>: the aria-label would override
+     it (dead label). aria-label gives the accessible name; the options keep
+     "per page" for visual clarity (the hidden label is not seen by sighted users). #}
+  <label class="pagination-size-label" for="pagination-size-select">
+    <select id="pagination-size-select"
+            class="pagination-size-select"
+            aria-label="Rows per page">
+      <option value="25"  {% if page_size == 25  %}selected{% endif %}>25 per page</option>
+      <option value="50"  {% if page_size == 50  %}selected{% endif %}>50 per page</option>
+      <option value="100" {% if page_size == 100 %}selected{% endif %}>100 per page</option>
+    </select>
+  </label>
+</nav>
+{# Server-side clamp OOB: if page was clamped, resync the client's hidden input
+   so the next poll does not request a page that does not exist. #}
+{% if page_clamped %}
+<input type="hidden" id="filter-page-val" name="page" value="{{ page }}"
+       hx-swap-oob="true">
+{% endif %}
+{# Datalist of the content-type filter (#filter-artifact-type, in the
+   dashboard's #filter-form). Lives in this partial because it is the render that
+   receives artifact_content_types from the endpoint -- the server only populates it
+   when the artifact filter is active (empty list otherwise) and the input
+   resolves it by id even though it sits outside #tasks-panel. #}
+<datalist id="artifact-types-list">
+  {% for ct in artifact_content_types | default([]) %}
+  <option value="{{ ct }}"></option>
+  {% endfor %}
+</datalist>

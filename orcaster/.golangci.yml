@@ -1,0 +1,26 @@
+# golangci-lint configuration for the orcaster CLI (schema v2).
+# Python->Go glossary: golangci-lint is ~ ruff/flake8 — a meta-linter that runs
+# several analyzers. `default: standard` enables the canonical set (errcheck, govet,
+# ineffassign, staticcheck, unused); below we add a few extra low-noise ones.
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - unconvert   # redundant type conversions
+    - bodyclose   # http.Response.Body left open (relevant: we are an HTTP client)
+  # misspell is left out on purpose: it only supports English locales and it
+  # would add noise on identifiers and domain terms.
+  settings:
+    errcheck:
+      # Output to stdout/buffers (fmt.Fprint*) has no actionable recovery in a
+      # CLI; checking every Fprintf would only add noise. errcheck already excludes
+      # fmt.Print* by default; we extend the exclusion to the Fprint* variants.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+
+formatters:
+  enable:
+    - gofmt

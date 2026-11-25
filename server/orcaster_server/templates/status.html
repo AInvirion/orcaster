@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>{{ snap.workspace_name }} &middot; Status</title>
+  <script src="/static/htmx.min.js?v=2.0.10"></script>
+  <style>
+    /* ---------------------------------------------------------------------
+     * Peltre tokens (dashboard palette, see app.css). Copied verbatim
+     * because this plane is standalone under a strict CSP (style-src 'self'
+     * 'unsafe-inline') and cannot depend on /static/app.css.
+     *
+     * Anonymous, no login, no theme toggle or localStorage: by default it is
+     * DARK (same OKLCH values that app.css uses in its
+     * prefers-color-scheme: dark block), and @media (prefers-color-scheme: light)
+     * overrides them with the light values. Never #000/#fff: tinted neutrals
+     * hue 220, teal-petrol accent hue 195, semantic colors separate.
+     * --------------------------------------------------------------------- */
+    :root {
+      color-scheme: dark;
+      --hue: 220;
+
+      --bg:            oklch(15% 0.011 var(--hue));
+      --surface:       oklch(19% 0.013 var(--hue));
+      --surface-2:     oklch(24% 0.015 var(--hue));
+      --surface-3:     oklch(28% 0.017 var(--hue));
+      --border:        oklch(30% 0.017 var(--hue));
+      --border-strong: oklch(40% 0.019 var(--hue));
+      --text:          oklch(92% 0.011 var(--hue));
+      --text-muted:    oklch(68% 0.013 var(--hue));
+      --text-faint:    oklch(55% 0.011 var(--hue));
+
+      --accent:        oklch(70% 0.14 195);
+      --accent-hover:  oklch(76% 0.15 195);
+      --accent-fg:     oklch(15% 0.015 195);
+      --focus-ring:    oklch(80% 0.16 195 / 0.5);
+
+      --ok-bg:        oklch(28% 0.07 155);
+      --ok-fg:        oklch(86% 0.1 155);
+      --warn-bg:      oklch(32% 0.1 70);
+      --warn-fg:      oklch(88% 0.12 80);
+      --warn-line:    oklch(55% 0.14 75);
+      --danger-bg:    oklch(30% 0.12 25);
+      --danger-fg:    oklch(88% 0.1 25);
+      --danger-line:  oklch(52% 0.16 25);
+      --danger-solid: oklch(60% 0.21 25);
+      --info-bg:      oklch(28% 0.08 240);
+      --info-fg:      oklch(86% 0.1 240);
+
+      --shadow-1: 0 1px 2px oklch(5% 0.01 var(--hue) / 0.5);
+      --shadow-2: 0 6px 22px oklch(5% 0.01 var(--hue) / 0.55);
+
+      --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+                   Roboto, Helvetica, Arial, sans-serif;
+      --fs-xs:   0.75rem;
+      --fs-sm:   0.85rem;
+      --fs-base: 0.95rem;
+      --fs-md:   1.05rem;
+      --fs-lg:   1.15rem;
+      --fs-xl:   1.45rem;
+      --fs-2xl:  1.85rem;
+      --lh-tight: 1.25;
+      --lh-base:  1.55;
+
+      --sp-1: 0.25rem; --sp-2: 0.5rem;  --sp-3: 0.75rem; --sp-4: 1rem;
+      --sp-5: 1.25rem; --sp-6: 1.5rem;  --sp-7: 1.75rem; --sp-8: 2rem;
+      --sp-10: 2.5rem;
+
+      --radius:      6px;
+      --radius-lg:   10px;
+      --radius-pill: 999px;
+
+      --ease-out: cubic-bezier(.22, 1, .36, 1);
+      --dur-fast:  120ms;
+      --dur-base:  220ms;
+      --dur-slow:  360ms;
+      --dur-pulse: 2s;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        color-scheme: light;
+        --bg:            oklch(99% 0.004 var(--hue));
+        --surface:       oklch(98% 0.007 var(--hue));
+        --surface-2:     oklch(95.5% 0.009 var(--hue));
+        --surface-3:     oklch(93% 0.011 var(--hue));
+        --border:        oklch(89% 0.011 var(--hue));
+        --border-strong: oklch(80% 0.014 var(--hue));
+        --text:          oklch(22% 0.018 var(--hue));
+        --text-muted:    oklch(50% 0.013 var(--hue));
+        --text-faint:    oklch(65% 0.011 var(--hue));
+
+        --accent:        oklch(54% 0.13 195);
+        --accent-hover:  oklch(48% 0.14 195);
+        --accent-fg:     oklch(98% 0.01 195);
+        --focus-ring:    oklch(70% 0.15 195 / 0.45);
+
+        --ok-bg:        oklch(92% 0.06 155);
+        --ok-fg:        oklch(35% 0.12 155);
+        --warn-bg:      oklch(93% 0.09 80);
+        --warn-fg:      oklch(40% 0.13 70);
+        --warn-line:    oklch(72% 0.14 75);
+        --danger-bg:    oklch(92% 0.06 25);
+        --danger-fg:    oklch(40% 0.18 25);
+        --danger-line:  oklch(72% 0.14 25);
+        --danger-solid: oklch(55% 0.21 25);
+        --info-bg:      oklch(93% 0.05 240);
+        --info-fg:      oklch(38% 0.15 240);
+
+        --shadow-1: 0 1px 2px oklch(20% 0.03 var(--hue) / 0.06);
+        --shadow-2: 0 4px 14px oklch(20% 0.03 var(--hue) / 0.10);
+      }
+    }
+
+    /* ---------------------------------------------------------------------
+     * Reset + base.
+     * --------------------------------------------------------------------- */
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { overflow-x: hidden; }
+    body {
+      margin: 0;
+      font-family: var(--font-sans);
+      font-size: var(--fs-base);
+      line-height: var(--lh-base);
+      color: var(--text);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    .status-wrap { max-width: 760px; margin: 0 auto; padding: var(--sp-6) var(--sp-4) var(--sp-10); }
+
+    /* ---------------------------------------------------------------------
+     * Header: workspace name + live indicator.
+     * --------------------------------------------------------------------- */
+    .status-header {
+      display: flex; align-items: baseline; justify-content: space-between;
+      gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-8);
+    }
+    .status-header h1 {
+      margin: 0;
+      font-size: var(--fs-2xl);
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      line-height: var(--lh-tight);
+    }
+    .live-indicator {
+      display: inline-flex; align-items: center; gap: var(--sp-2);
+      font-size: var(--fs-sm); color: var(--text-muted); white-space: nowrap;
+    }
+    .live-pip {
+      width: 8px; height: 8px; border-radius: 50%; flex: none;
+      background: var(--ok-fg);
+      animation: status-pip-pulse var(--dur-pulse) var(--ease-out) infinite;
+    }
+    @keyframes status-pip-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--ok-fg) 40%, transparent); }
+      50%      { box-shadow: 0 0 0 5px color-mix(in oklch, var(--ok-fg) 0%, transparent); }
+    }
+    #updated-ago { font-variant-numeric: tabular-nums; }
+
+    /* ---------------------------------------------------------------------
+     * Variant lens: version selector. Peltre capsule like the rest
+     * of the controls. Native GET form; with JS the Apply button is hidden and
+     * the <select> auto-submits (status.js). Without JS, Apply navigates.
+     * --------------------------------------------------------------------- */
+    .variant-form {
+      display: flex; align-items: center; gap: var(--sp-2);
+      flex-wrap: wrap; margin-bottom: var(--sp-7);
+    }
+    .variant-label {
+      font-size: var(--fs-xs); font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+    .variant-select {
+      font-family: inherit; font-size: var(--fs-sm); font-weight: 500;
+      line-height: 1.4; color: var(--text);
+      background: var(--surface-2); border: 1px solid var(--border-strong);
+      border-radius: var(--radius-pill); padding: 0.4rem 0.9rem;
+      max-width: 100%; cursor: pointer;
+      transition: background-color var(--dur-fast) var(--ease-out),
+                  border-color var(--dur-fast) var(--ease-out);
+    }
+    .variant-select:hover { background: var(--surface); }
+    .variant-select:focus-visible {
+      outline: 2px solid var(--focus-ring); outline-offset: 2px;
+      border-color: var(--accent);
+    }
+    .variant-apply {
+      font-family: inherit; font-size: var(--fs-sm); font-weight: 600;
+      color: var(--accent-fg); background: var(--accent);
+      border: 1px solid transparent; border-radius: var(--radius-pill);
+      padding: 0.4rem 0.9rem; cursor: pointer;
+      transition: background-color var(--dur-fast) var(--ease-out);
+    }
+    .variant-apply:hover { background: var(--accent-hover); }
+    .variant-apply[hidden] { display: none; }
+
+    /* ---------------------------------------------------------------------
+     * Section vocabulary, shared by chips and fleet. Same language as
+     * .panel > h2 in app.css: muted uppercase label + square accent pip,
+     * no side-stripe.
+     * --------------------------------------------------------------------- */
+    .panel { margin-bottom: var(--sp-8); }
+    .panel:last-of-type { margin-bottom: 0; }
+    .panel h2 {
+      margin: 0 0 var(--sp-3);
+      padding-bottom: var(--sp-2);
+      border-bottom: 1px solid var(--border);
+      font-size: var(--fs-sm);
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+    }
+    .panel h2::before {
+      content: "";
+      display: inline-block;
+      width: 0.45rem; height: 0.45rem;
+      border-radius: 2px;
+      background: var(--accent);
+      margin-right: var(--sp-2);
+      vertical-align: 0.15em;
+      opacity: 0.6;
+    }
+
+    /* ---------------------------------------------------------------------
+     * Progress hero: the protagonist of the page. Large, honest bar,
+     * animated with transform:scaleX (NEVER width) over a 100% fill.
+     * --------------------------------------------------------------------- */
+    .progress-hero { margin-bottom: var(--sp-8); }
+    .progress-hero-head {
+      display: flex; align-items: baseline; justify-content: space-between;
+      gap: var(--sp-3); margin-bottom: var(--sp-3); flex-wrap: wrap;
+    }
+    .progress-copy { color: var(--text-muted); font-size: var(--fs-base); }
+    .progress-copy strong { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 700; }
+    .progress-pct {
+      font-size: var(--fs-xl); font-weight: 700; color: var(--text);
+      font-variant-numeric: tabular-nums; letter-spacing: -0.01em; white-space: nowrap;
+    }
+    /* Stacked bar: three absolute full-width layers that scale with
+       transform:scaleX (NEVER width — no reflow during the 10s poll).
+       Paint order follows DOM order: pending (neutral base, no transform),
+       failed (scales to the processed total) and completed on top with its
+       fraction; the visible part of the red is exactly what failed. */
+    .progress-bar {
+      position: relative;
+      height: 16px;
+      background: var(--surface-3);
+      border-radius: var(--radius-pill);
+      overflow: hidden;
+    }
+    .progress-segment {
+      position: absolute; inset: 0;
+      border-radius: inherit;
+      transform: scaleX(var(--pct, 0));
+      transform-origin: left center;
+      transition: transform var(--dur-slow) var(--ease-out);
+      will-change: transform;
+    }
+    .segment-pending   { background: var(--surface-3); transform: none; }
+    .segment-failed    { background: var(--danger-fg); }
+    .segment-completed { background: var(--ok-fg); }
+    .progress-note {
+      margin: var(--sp-3) 0 0;
+      color: var(--text-muted);
+      font-size: var(--fs-sm);
+    }
+    .progress-empty {
+      margin: 0;
+      padding: var(--sp-4) 0;
+      color: var(--text-faint);
+      font-size: var(--fs-base);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .progress-segment { transition: none; }
+      .live-pip { animation: none; }
+    }
+
+    /* ---------------------------------------------------------------------
+     * Stat row: NOT an identical card grid nor a hero-metric. Typographic chip
+     * (large tabular number + muted uppercase label), same vocabulary as
+     * .stat in app.css.
+     * --------------------------------------------------------------------- */
+    .stat-row {
+      display: flex; flex-wrap: wrap;
+      gap: var(--sp-6) var(--sp-8);
+      padding-bottom: var(--sp-6);
+      margin-bottom: var(--sp-8);
+      border-bottom: 1px solid var(--border);
+    }
+    .stat {
+      display: flex; flex-direction: column; gap: 0.15rem;
+      min-width: 4.5rem;
+    }
+    .stat strong {
+      font-size: var(--fs-xl);
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -0.01em;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+    .stat-label {
+      font-size: var(--fs-xs);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+    .stat.is-danger strong { color: var(--danger-fg); }
+
+    /* ---------------------------------------------------------------------
+     * Chips: "tasks by status". Lowercase pill, semantic colors.
+     * --------------------------------------------------------------------- */
+    .chip-row { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+    .chip {
+      display: inline-block;
+      padding: 0.2rem 0.7rem;
+      border-radius: var(--radius-pill);
+      font-size: var(--fs-xs);
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: lowercase;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+      background: var(--surface-2);
+      color: var(--text-muted);
+      border: 1px solid transparent;
+    }
+    /* Dispatching is a waiting state (like queued/paused): warn, not info.
+       Matches .badge-dispatching in app.css. */
+    .chip-queued,
+    .chip-paused,
+    .chip-dispatching { background: var(--warn-bg); color: var(--warn-fg); }
+    .chip-completed   { background: var(--ok-bg);   color: var(--ok-fg); }
+    .chip-failed      { background: var(--danger-bg); color: var(--danger-fg); }
+    /* Cancelled is not a failure: muted neutral (hairline border-strong),
+       never the danger ramp. text-muted (not text-faint) to pass AA
+       contrast on 0.75rem text, like badge.worker-name. */
+    .chip-cancelled {
+      background: var(--surface-2);
+      color: var(--text-muted);
+      border-color: var(--border-strong);
+    }
+
+    /* ---------------------------------------------------------------------
+     * Worker fleet: calm density, pill badges, no side-stripe.
+     * --------------------------------------------------------------------- */
+    .fleet-list {
+      list-style: none; margin: 0; padding: 0;
+      display: flex; flex-direction: column; gap: var(--sp-2);
+      max-height: 22rem;
+      overflow-y: auto;
+    }
+    .fleet-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: var(--sp-3);
+      padding: var(--sp-2) var(--sp-3);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    .fleet-name { font-weight: 600; color: var(--text); }
+    .fleet-meta {
+      display: flex; align-items: center; gap: var(--sp-3);
+      font-size: var(--fs-sm); color: var(--text-muted);
+    }
+    .fleet-active { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .fleet-empty {
+      margin: 0;
+      color: var(--text-faint);
+      font-size: var(--fs-base);
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.6rem;
+      border-radius: var(--radius-pill);
+      font-size: var(--fs-xs);
+      font-weight: 600;
+      line-height: 1.4;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+      text-transform: lowercase;
+      background: var(--surface-2);
+      color: var(--text-muted);
+      border: 1px solid transparent;
+    }
+    .badge-online  { background: var(--ok-bg);   color: var(--ok-fg); }
+    .badge-paused  { background: var(--warn-bg); color: var(--warn-fg); }
+    .badge-offline { background: var(--danger-bg); color: var(--danger-fg); }
+
+    /* ---------------------------------------------------------------------
+     * Footer.
+     * --------------------------------------------------------------------- */
+    .status-footer {
+      margin-top: var(--sp-8);
+      padding-top: var(--sp-4);
+      border-top: 1px solid var(--border);
+      text-align: center;
+      color: var(--text-faint);
+      font-size: var(--fs-xs);
+    }
+  </style>
+</head>
+<body>
+  <div class="status-wrap">
+    <header class="status-header">
+      <h1>{{ snap.workspace_name }}</h1>
+      <span class="live-indicator">
+        <span class="live-pip" aria-hidden="true"></span>
+        Live &middot; <span id="updated-ago">updated just now</span>
+      </span>
+    </header>
+    {# Version lens: native GET form → usable WITHOUT JS (the Apply button
+       navigates to /status/{token}?variant=…). status.js enhances it: auto-submit on
+       change + hides the button. It only appears if there are variants to choose from.
+       It re-scales the progress and the chips; the fleet and "Active now" stay global.
+       It lives outside #status-summary (the 10s poll does not sweep it), so it persists
+       across refreshes. #}
+    {% set variant_options = snap.variant_options %}
+    {% set selected_variant = snap.selected_variant %}
+    {% if variant_options.tools or variant_options.has_other %}
+    <form class="variant-form" method="get" action="/status/{{ token }}">
+      <label for="status-variant" class="variant-label">Version</label>
+      <select id="status-variant" name="variant" class="variant-select">
+        {% include "_variant_options.html" %}
+      </select>
+      <button type="submit" class="variant-apply">Apply</button>
+    </form>
+    {% endif %}
+    {# First embedded render to serve content without waiting for the first poll. #}
+    {% include "_status_summary.html" %}
+    <footer class="status-footer">powered by Orcaster</footer>
+  </div>
+  {# Counter script externalized (not inline): lets the CSP of the
+     /status/* plane use `script-src 'self'` without `'unsafe-inline'` or
+     fragile hashes. Cache-bust with ?v= when status.js changes. #}
+  <script src="/static/status.js?v=2"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{# Output lines rendered in reading order (seq), which equals
+   temporal order (the worker assigns seq and ts under the same lock). Each event is
+   a chunk of a stream; it is emitted as a <span> coloured by stream. The
+   container uses white-space: pre-wrap, so line breaks inside each
+   chunk are respected. The text is auto-escaped (Jinja autoescape). UI in English. #}
+{%- for ev in events -%}
+<span class="out-chunk out-{{ ev.stream }}" title="{{ ev.ts_display }} · {{ ev.stream }}">{{ ev.text }}</span>
+{%- endfor -%}

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Output task #{{ task_id }} / {{ worker_id[:8] }}{% endblock %}
+{% block content %}
+<nav class="breadcrumb" aria-label="Breadcrumb">
+  <a href="/admin/tasks/{{ task_id }}" class="breadcrumb-back">
+    <span aria-hidden="true">←</span> Task #{{ task_id }}
+  </a>
+</nav>
+<h2>Execution output</h2>
+{# SSE container: scopes the EventSource connection to this page (SSE pilot).
+   Only active when sse_enabled=True; otherwise the poller uses polling. #}
+<div{% if sse_enabled %} hx-ext="sse" sse-connect="/admin/events?topics=output,execution"{% endif %}>
+  {% include "_execution_output_body.html" %}
+</div>
+{% endblock %}

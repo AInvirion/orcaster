@@ -1,0 +1,18 @@
+Failed tasks: 1  (since 2026-07-23 00:00:00 UTC, until 2026-07-23 09:30:00 UTC, limit 100)
+Computed at 2026-07-23 09:30:00 UTC
+
+By exit code:
+  EXIT  COUNT
+  1     1
+
+By worker:
+  WORKER    COUNT
+  worker-1  1
+
+By signature (1):
+
+  [1x] boom
+       exit codes: 1
+       example: task 7  execution -  worker worker-1  exit 1
+       stderr: boom
+       samples: 7

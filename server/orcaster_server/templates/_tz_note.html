@@ -1,0 +1,12 @@
+{# Time zone note for a table/section with timestamps. The server-side
+   fallback is UTC: without JS, the ts() macro leaves timestamps in UTC, so
+   the legend must say UTC. app.js (initTzNotes) rewrites the text to
+   "local time (<zone>)" and adds the hover hint, in line with ts() (the server
+   emits UTC, the client rewrites to local). UI in English.
+
+   tz_note_id is optional: it is only passed where the note needs an id + hx-preserve
+   to survive a re-render caused by polling (see task_detail.html /
+   worker_detail.html). Without an id there is nothing for hx-preserve to anchor, and a
+   fixed id here would produce duplicate ids in templates that include this
+   partial more than once (workspaces.html). #}
+<p class="tz-note js-tz-note" role="note"{% if tz_note_id is defined and tz_note_id %} id="{{ tz_note_id }}" hx-preserve="true"{% endif %}>Times shown in UTC.</p>

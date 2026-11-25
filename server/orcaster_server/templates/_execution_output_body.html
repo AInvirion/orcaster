@@ -1,0 +1,41 @@
+{# Full body of the output view (first load). The output is served
+   from `output_events` (full capture), rendered interleaved by
+   stream and paginated: each response carries at most one page.
+   While `live`, an HTMX poller at the end of the log replaces itself every 2s
+   bringing only the events with `seq` greater than the last one seen (incremental
+   polling); if a page is pending (`has_more`) the poller fires
+   immediately (`load delay:100ms`), also on terminal executions with
+   a backlog. Once terminal and with no backlog the poller stops
+   re-rendering and the status line is refreshed via hx-swap-oob.
+   UI in English. #}
+<div id="exec-output-body">
+  {% include "_execution_output_statusline.html" %}
+  {# Download of the full output. Plain <a> links, no
+     HTMX: the browser handles the download. Always visible, also while the
+     execution is live (snapshot of whatever exists up to that moment). UI in
+     English. #}
+  <p class="pill-link-row">
+    <a class="pill-link"
+       href="/admin/executions/{{ execution.id }}/output/download">Download log</a>
+    <a class="pill-link"
+       href="/admin/executions/{{ execution.id }}/output/download?format=jsonl">JSONL</a>
+  </p>
+  {# Strict whitespace control inside the div: pre-wrap turns any
+     indentation text node into a visible blank line.
+     SYNC NOTE: the poller span is duplicated in _execution_output_poll.html;
+     any change to its markup must be replicated in that file. #}
+  <div id="exec-output-log" class="output-log">
+    {%- include "_execution_output_lines.html" -%}
+    {%- if live or has_more -%}<span id="exec-output-poller"
+          {%- if live %} class="poller-live"{% endif %} aria-hidden="true"
+          hx-get="{{ poll_url }}"
+          {# With SSE active the trigger listens to sse:output-<id> (new lines) and sse:execution-<id> (status change; refreshes the statusline OOB and stops the poller on reaching terminal), plus a load delay if there is a backlog. An `every Ns` guard is deliberately NOT added: reconnecting after the stream drops is the browser EventSource's responsibility. #}
+          {%- if sse_enabled %}
+          hx-trigger="sse:output-{{ execution_id }}, sse:execution-{{ execution_id }}{% if has_more %}, load delay:100ms{% endif %}"
+          {%- else %}
+          hx-trigger="{{ poll_trigger }}"
+          {%- endif %}
+          hx-swap="outerHTML"
+          hx-target="this"></span>{%- endif -%}
+  </div>
+</div>

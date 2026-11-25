@@ -1,0 +1,5 @@
+ID   STATUS     PROGRESS  PRIORITY  RETRIES  CREATED              COMPLETED
+196  queued     0/0       9         0        2026-06-02 16:40:00  -
+194  succeeded  1/1       5         0        2026-06-02 16:20:00  2026-06-02 16:21:30
+
+More results: --cursor 192
