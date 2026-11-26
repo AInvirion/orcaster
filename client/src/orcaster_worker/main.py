@@ -258,9 +258,43 @@ async def _emit_synthetic_output(
     await s.aclose(drain_deadline=_DRAIN_DEADLINE_SECONDS)
 
 
+# Deprecated names of the cache and artifacts dirs, from before the product was
+# renamed. Tasks written for the old name still read them, so each one is
+# exported with the value of its ORCASTER_* counterpart.
+_LEGACY_CACHE_DIR_ENV = "TASKORCH_CACHE_DIR"
+_LEGACY_ARTIFACTS_DIR_ENV = "TASKORCH_ARTIFACTS_DIR"
+
+# The task directory names the worker owns, legacy aliases included. Only the
+# worker sets them: any value already in the built env (worker environment in
+# legacy mode, or a name declared in ``task_env``) is dropped before
+# ``_prepare_cache_env`` runs, so when the cache dir cannot be prepared the task
+# gets none of them rather than a value from elsewhere. They are also reserved
+# names (``RESERVED_ENV_NAMES``), so a server secret never supplies them.
+_WORKER_OWNED_DIR_ENV_NAMES: tuple[str, ...] = (
+    "ORCASTER_CACHE_DIR",
+    _LEGACY_CACHE_DIR_ENV,
+    "ORCASTER_ARTIFACTS_DIR",
+    _LEGACY_ARTIFACTS_DIR_ENV,
+)
+
+# Every name ``_prepare_cache_env`` writes: set together, removed together.
+_CACHE_ENV_NAMES: tuple[str, ...] = (
+    "ORCASTER_CACHE_DIR",
+    _LEGACY_CACHE_DIR_ENV,
+    "HF_HOME",
+    "PIP_CACHE_DIR",
+    "XDG_CACHE_HOME",
+    "ORCASTER_ARTIFACTS_DIR",
+    _LEGACY_ARTIFACTS_DIR_ENV,
+)
+
+
 def _prepare_cache_env(env: dict[str, str], *, cache_root: Path, job_key: str) -> tuple[Path, Path]:
     """Resolves the task-scoped cache dir, creates it, and populates the
     ecosystem env vars + ``ORCASTER_ARTIFACTS_DIR``. Returns ``(cache_dir, artifacts_dir)``.
+
+    ``TASKORCH_CACHE_DIR`` and ``TASKORCH_ARTIFACTS_DIR`` are deprecated aliases
+    of the two ``ORCASTER_*`` names, set to the same values.
 
     The artifacts dir is a DEDICATED folder (``<cache_dir>/artifacts``), a sibling
     of ``hf/``/``pip/``/``xdg/`` and created EMPTY before the subprocess. Since it
@@ -269,12 +303,14 @@ def _prepare_cache_env(env: dict[str, str], *, cache_root: Path, job_key: str) -
     recomputing it: this function is the single source of the path."""
     cache_dir = ensure_task_cache_dir(cache_root, job_key)
     env["ORCASTER_CACHE_DIR"] = str(cache_dir)
+    env[_LEGACY_CACHE_DIR_ENV] = str(cache_dir)
     env["HF_HOME"] = str(cache_dir / "hf")
     env["PIP_CACHE_DIR"] = str(cache_dir / "pip")
     env["XDG_CACHE_HOME"] = str(cache_dir / "xdg")
     artifacts_dir = cache_dir / "artifacts"
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     env["ORCASTER_ARTIFACTS_DIR"] = str(artifacts_dir)
+    env[_LEGACY_ARTIFACTS_DIR_ENV] = str(artifacts_dir)
     return cache_dir, artifacts_dir
 
 
@@ -1334,6 +1370,8 @@ async def _run_external(
             # cwd (<cache_root>/run/<unique>/) is created below and deleted after the
             # dispatch.
             cmd_env = dict(venv.env)
+            for _k in _WORKER_OWNED_DIR_ENV_NAMES:
+                cmd_env.pop(_k, None)
             if cache_dir is not None:
                 try:
                     _, prepared_artifacts_dir = _prepare_cache_env(
@@ -1348,16 +1386,11 @@ async def _run_external(
                     # cache_dir=None avoids delete-after-success on a dir in an
                     # inconsistent state. _prepare_cache_env may have partly mutated
                     # cmd_env before raising (e.g. it set ORCASTER_CACHE_DIR and then
-                    # the artifacts mkdir failed): clear all five keys so the
-                    # subprocess does not receive partial or inconsistent cache env vars.
+                    # the artifacts mkdir failed): clear every name it writes, legacy
+                    # aliases included, so the subprocess does not receive partial or
+                    # inconsistent cache env vars.
                     cache_dir = None
-                    for _k in (
-                        "ORCASTER_CACHE_DIR",
-                        "HF_HOME",
-                        "PIP_CACHE_DIR",
-                        "XDG_CACHE_HOME",
-                        "ORCASTER_ARTIFACTS_DIR",
-                    ):
+                    for _k in _CACHE_ENV_NAMES:
                         cmd_env.pop(_k, None)
                     log.warning(
                         "task_id=%s could not prepare cache env: %s; "

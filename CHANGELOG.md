@@ -7,8 +7,24 @@ This project versions the system as a whole (server + client + CLI) under a sing
 
 ## [Unreleased]
 
+### Added
+
+- The worker exports `TASKORCH_CACHE_DIR` and `TASKORCH_ARTIFACTS_DIR` to the
+  task as deprecated aliases of `ORCASTER_CACHE_DIR` and
+  `ORCASTER_ARTIFACTS_DIR`, with the same values. Tasks written before the
+  rename read those names and found them empty on a 2.0.0 worker.
+
 ### Changed
 
+- `ORCASTER_CACHE_DIR`, `ORCASTER_ARTIFACTS_DIR`, `TASKORCH_CACHE_DIR` and
+  `TASKORCH_ARTIFACTS_DIR` are reserved names. The server rejects them as task
+  secret names with `422` (API) or `400` (dashboard), in any letter case. The
+  worker always sets them itself: a value from `task_env` (worker environment)
+  or a task secret never reaches the task, also when the worker cannot create
+  the cache directory, in which case the task gets none of the four. A secret
+  already stored under one of these names is still listed and can be deleted;
+  a worker of this version or later never passes its value to a task (an older
+  worker may), so owners should delete it.
 - The README explains why the project is named Orcaster.
 
 ## [2.0.0] - 2026-11-25

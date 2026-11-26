@@ -26,8 +26,9 @@ TASK_ENV_NAME_MAX_LEN = SECRET_NAME_MAX_LEN
 # server's delivery, a variable that the task declares in `task_env` with a
 # value that changes how the shell, the dynamic loader, interpreters and
 # runtimes, build tools, installers, git, the trust store, proxy routing (set by
-# the worker) or helper programs behave. It is not a sandbox: the task already
-# runs arbitrary code with what it receives. The list is closed; a new name
+# the worker) or helper programs behave, or where the task writes (the cache and
+# artifacts directory names, also set by the worker). It is not a sandbox: the
+# task already runs arbitrary code with what it receives. The list is closed; a new name
 # enters only with a concrete case. The worker applies the same denylist to the
 # delivered values. The comparison is case-insensitive (`name.upper()`):
 # lowercase `http_proxy` is also read by curl and others, and no variant may
@@ -102,6 +103,12 @@ RESERVED_SECRET_NAMES: frozenset[str] = frozenset(
         "HTTPS_PROXY",
         "NO_PROXY",
         "ALL_PROXY",
+        # Task directories: the worker sets them itself. The TASKORCH_* names are
+        # deprecated aliases kept for tasks written before the rename.
+        "ORCASTER_CACHE_DIR",
+        "ORCASTER_ARTIFACTS_DIR",
+        "TASKORCH_CACHE_DIR",
+        "TASKORCH_ARTIFACTS_DIR",
     }
 )
 RESERVED_SECRET_PREFIXES: tuple[str, ...] = (
@@ -279,7 +286,7 @@ def validate_secret_name(name: str) -> str:
         raise ValueError(
             "secret name is a reserved name: it controls the shell, loader, "
             "interpreter or runtime, build tools, installer, git, trust store, proxy "
-            "routing or helper programs of the task"
+            "routing, helper programs or directories of the task"
         )
     return name
 

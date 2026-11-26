@@ -202,8 +202,8 @@ Automatic retries (`auto_retry`), all fields optional:
 A task starts with a clean environment when its payload has `task_env`: it
 receives the variables named there, plus a fixed base set from the worker
 (`PATH`, `HOME`, locale, CA bundles, `$ORCASTER_CACHE_DIR`,
-`$ORCASTER_ARTIFACTS_DIR`, ...). For each name the value comes from,
-in order:
+`$ORCASTER_ARTIFACTS_DIR` and their deprecated `TASKORCH_*` aliases, ...). For
+each name declared in `task_env` the value comes from, in order:
 
 1. a secret stored for the worker that runs the task;
 2. a workspace secret with that name;
@@ -212,6 +212,14 @@ in order:
 A name with no value anywhere is skipped with a warning; the task still runs.
 The proxy variables (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, `ALL_PROXY`) are
 reserved: they always take the worker's value and cannot be stored as secrets.
+The task directory variables `ORCASTER_CACHE_DIR`, `ORCASTER_ARTIFACTS_DIR`,
+`TASKORCH_CACHE_DIR` and `TASKORCH_ARTIFACTS_DIR` are reserved too: the worker
+always sets them itself, so neither `--env` nor a secret can override them. A
+secret stored under one of them before this rule is still listed and deletable;
+a worker of this version or later never passes it to a task, an older one may,
+so remove it with `orcaster secret delete NAME`.
+The full list of reserved names is in
+[Setting a secret](user-manual.md#setting-a-secret-owner-only).
 Names are names only: `--env NAME=value`, names starting with `ORCH_` and
 strings that look like tokens (`hf_`, `ghp_`, `sk-`, ...) are rejected before
 the task is created.
@@ -409,6 +417,13 @@ collect everything).
 key, or by the task id). The worker keeps it after a failed run, so a retry on
 the same worker can reuse downloads, and by default deletes it after a
 successful run.
+
+The worker also exports `$TASKORCH_CACHE_DIR` and `$TASKORCH_ARTIFACTS_DIR` with
+the same values as `$ORCASTER_CACHE_DIR` and `$ORCASTER_ARTIFACTS_DIR`. They are
+deprecated aliases kept for tasks written before the rename; use the
+`ORCASTER_*` names in new tasks. The worker sets all four itself and they cannot
+be overridden (see [Secrets and environment](#secrets-and-environment)). If the
+worker cannot create the cache directory, the task runs without any of them.
 
 ### Cancel, retry, fork, delete
 

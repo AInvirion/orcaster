@@ -92,16 +92,17 @@ _TOKEN_PREFIX_RE = re.compile(r"(?:hf_|gh[opsur]_|github_pat_|glpat-|xox[bp]-|sk
 # declares them. The denylist only prevents a workspace owner (who controls the
 # stored secrets) from overriding, through the server delivery, a variable the task
 # declares in ``task_env`` with a value that changes how the shell, the dynamic
-# loader, interpreters and runtimes, build tools, installers, git, PATH and the
-# base environment, the TLS trust store, proxy routing (owned by the worker) or
-# helper programs behave. It is not a sandbox: the task already runs arbitrary code
-# with what it receives. The list is closed; a new name is added only with a
-# concrete case. For these names the worker environment value applies; the server
-# value is discarded and reported by name (``refused_server``). The server also
-# rejects them when storing them: this is defense in depth.
-# The comparison is case-insensitive (``name.upper()``): lowercase ``http_proxy``
-# is also read by curl and others. The lists are uppercase and literal: the parity
-# test reads them with ``ast`` and requires them to be identical to those in
+# loader, interpreters and runtimes, build tools, installers, git, PATH and the base
+# environment, the TLS trust store, proxy routing (owned by the worker) or helper
+# programs behave, or where the task writes (the cache and artifacts directory
+# names, which the worker sets itself). It is not a sandbox: the task already runs
+# arbitrary code with what it receives. The list is closed; a new name is added only
+# with a concrete case. For these names the worker environment value applies; the
+# server value is discarded and reported by name (``refused_server``). The server
+# also rejects them when storing them: this is defense in depth.
+# The comparison is case-insensitive (``name.upper()``): lowercase ``http_proxy`` is
+# also read by curl and others. The lists are uppercase and literal: the parity test
+# reads them with ``ast`` and requires them to be identical to those in
 # ``server/orcaster_server/env_names.py``. That is why PATH and
 # ``BASE_ENV_PASSTHROUGH`` are repeated here instead of derived.
 RESERVED_ENV_NAMES: frozenset[str] = frozenset(
@@ -171,6 +172,12 @@ RESERVED_ENV_NAMES: frozenset[str] = frozenset(
         "HTTPS_PROXY",
         "NO_PROXY",
         "ALL_PROXY",
+        # Task directories: the worker sets them itself. The TASKORCH_* names are
+        # deprecated aliases kept for tasks written before the rename.
+        "ORCASTER_CACHE_DIR",
+        "ORCASTER_ARTIFACTS_DIR",
+        "TASKORCH_CACHE_DIR",
+        "TASKORCH_ARTIFACTS_DIR",
     }
 )
 RESERVED_ENV_PREFIXES: tuple[str, ...] = (

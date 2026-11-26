@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import dataclasses
 import shutil
 import sys
 from pathlib import Path
@@ -1744,7 +1745,8 @@ async def test_prepare_cache_env_oserror_does_not_leak_partial_env(
 ) -> None:
     """If _prepare_cache_env mutates `env` and THEN raises OSError (e.g. the
     artifacts mkdir fails after setting ORCASTER_CACHE_DIR/HF_HOME/...), the
-    degradation must be clean: NONE of the five cache env vars must
+    degradation must be clean: NONE of the cache env vars (legacy aliases
+    included) must
     reach the subprocess (the env that dispatch_run_batch receives)."""
     from contextlib import asynccontextmanager
     from types import SimpleNamespace
@@ -1767,10 +1769,12 @@ async def test_prepare_cache_env_oserror_does_not_leak_partial_env(
 
     def _mutate_then_raise(env, *, cache_root, job_key):
         env["ORCASTER_CACHE_DIR"] = "/x"
+        env["TASKORCH_CACHE_DIR"] = "/x"
         env["HF_HOME"] = "/x/hf"
         env["PIP_CACHE_DIR"] = "/x/pip"
         env["XDG_CACHE_HOME"] = "/x/xdg"
         env["ORCASTER_ARTIFACTS_DIR"] = "/x/artifacts"
+        env["TASKORCH_ARTIFACTS_DIR"] = "/x/artifacts"
         raise OSError("disk full")
 
     captured: dict[str, object] = {}
@@ -1809,10 +1813,12 @@ async def test_prepare_cache_env_oserror_does_not_leak_partial_env(
         k
         for k in (
             "ORCASTER_CACHE_DIR",
+            "TASKORCH_CACHE_DIR",
             "HF_HOME",
             "PIP_CACHE_DIR",
             "XDG_CACHE_HOME",
             "ORCASTER_ARTIFACTS_DIR",
+            "TASKORCH_ARTIFACTS_DIR",
         )
         if k in env
     ]
@@ -2342,3 +2348,280 @@ async def test_task_received_on_busy_poll_is_ignored_even_if_executor_finished(
     assert len(polls) >= 2, "the loop did not resume polling; the test did not measure anything"
     dispatch.assert_not_called()
     assert busy.task_id is None
+
+
+# --- Legacy TASKORCH_* aliases of the cache and artifacts dirs ----------------
+
+_DIR_ALIASES = (
+    ("ORCASTER_CACHE_DIR", "TASKORCH_CACHE_DIR"),
+    ("ORCASTER_ARTIFACTS_DIR", "TASKORCH_ARTIFACTS_DIR"),
+)
+
+
+async def _dispatched_env(
+    settings: Settings,
+    task: PollTaskPayload,
+    *,
+    source_env: dict[str, str] | None = None,
+    extra_patches: tuple = (),
+) -> dict[str, str]:
+    """Runs ``task`` with a fake venv and a mocked dispatch; returns the env the
+    subprocess would receive. The fake venv builds its env with the real
+    ``build_scrubbed_base_env`` from the ``task_env`` and ``secrets`` the worker
+    passes, so declared names and server secrets land in it as in production."""
+    from contextlib import ExitStack, asynccontextmanager
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    from orcaster_worker.main import _dispatch_poll_task
+    from orcaster_worker.task_env import build_scrubbed_base_env
+
+    source = {"PATH": "/usr/bin"} if source_env is None else source_env
+
+    @asynccontextmanager
+    async def _fake_venv(**kwargs):
+        yield SimpleNamespace(
+            env=build_scrubbed_base_env(
+                kwargs.get("task_env"), source=source, secrets=kwargs.get("secrets")
+            )
+        )
+
+    captured: dict[str, dict[str, str]] = {}
+
+    async def _fake_dispatch(
+        _payload, _settings, *, env=None, cwd=None, abandon_event=None, on_output=None
+    ):
+        captured["env"] = dict(env or {})
+        return "ok", {"exit_codes": [0], "stdout": "", "stderr": "", "failed_at": None}
+
+    respx.post(f"{BASE}/v1/tasks/{task.task_id}/complete").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    respx.post(f"{BASE}/v1/tasks/{task.task_id}/output").mock(
+        return_value=httpx.Response(200, json={"ok": True})
+    )
+    with ExitStack() as stack:
+        stack.enter_context(patch("orcaster_worker.main.ephemeral_venv", _fake_venv))
+        stack.enter_context(
+            patch(
+                "orcaster_worker.main.dispatch_run_batch",
+                new=AsyncMock(side_effect=_fake_dispatch),
+            )
+        )
+        for p in extra_patches:
+            stack.enter_context(p)
+        async with OrchestratorAPI(BASE, worker_id=WID, api_key="k") as api:
+            await _dispatch_poll_task(api, settings, BusyState(), asyncio.Event(), task)
+    assert "env" in captured, "dispatch_run_batch did not receive env"
+    return captured["env"]
+
+
+@respx.mock
+async def test_subprocess_env_has_legacy_dir_aliases_with_identical_values(
+    settings: Settings, signing_priv: Ed25519PrivateKey, tmp_path: Path
+) -> None:
+    """Tasks written before the rename read TASKORCH_CACHE_DIR and
+    TASKORCH_ARTIFACTS_DIR: the subprocess gets them next to the ORCASTER_*
+    names, with the same values."""
+    settings.cache_root = tmp_path / "scratch-cache"
+    settings.uv_cache_dir = None
+    settings.cache_delete_on_success = False
+    task = _signed_run_batch_task(
+        signing_priv,
+        task_id=930,
+        idempotency_key="dddddddd-0000-0000-0000-000000000001",
+        payload={"requirements": [], "commands": ["echo hi"]},
+    )
+
+    env = await _dispatched_env(settings, task)
+
+    for current, legacy in _DIR_ALIASES:
+        assert current in env, f"env keys: {sorted(env)}"
+        assert legacy in env, f"env keys: {sorted(env)}"
+        assert env[legacy] == env[current]
+    assert Path(env["TASKORCH_CACHE_DIR"]).is_dir()
+    assert Path(env["TASKORCH_ARTIFACTS_DIR"]).is_dir()
+
+
+@respx.mock
+async def test_legacy_dir_aliases_absent_when_cache_dir_cannot_be_prepared(
+    settings: Settings, signing_priv: Ed25519PrivateKey, tmp_path: Path
+) -> None:
+    """If the cache dir cannot be created, neither the ORCASTER_* names nor
+    their legacy aliases reach the subprocess."""
+    from unittest.mock import patch
+
+    settings.cache_root = tmp_path / "scratch-cache"
+    settings.uv_cache_dir = None
+    task = _signed_run_batch_task(
+        signing_priv,
+        task_id=931,
+        idempotency_key="dddddddd-0000-0000-0000-000000000002",
+        payload={"requirements": [], "commands": ["echo hi"]},
+    )
+
+    env = await _dispatched_env(
+        settings,
+        task,
+        extra_patches=(
+            patch(
+                "orcaster_worker.main.ensure_task_cache_dir",
+                side_effect=OSError("disk full"),
+            ),
+        ),
+    )
+
+    for current, legacy in _DIR_ALIASES:
+        assert current not in env
+        assert legacy not in env
+
+
+@respx.mock
+async def test_legacy_dir_aliases_not_overridable_by_task_env_or_secret(
+    settings: Settings, signing_priv: Ed25519PrivateKey, tmp_path: Path
+) -> None:
+    """A task that declares the names in ``task_env`` gets the worker's
+    directories, whether the competing value comes from the worker environment
+    (TASKORCH_CACHE_DIR) or from a server secret (TASKORCH_ARTIFACTS_DIR)."""
+    settings.cache_root = tmp_path / "scratch-cache"
+    settings.uv_cache_dir = None
+    settings.cache_delete_on_success = False
+    idem = "dddddddd-0000-0000-0000-000000000003"
+    task = _signed_run_batch_task(
+        signing_priv,
+        task_id=932,
+        idempotency_key=idem,
+        payload={
+            "requirements": [],
+            "commands": ["echo hi"],
+            "task_env": [name for pair in _DIR_ALIASES for name in pair],
+        },
+    )
+    task = dataclasses.replace(
+        task,
+        secrets={
+            "ORCASTER_ARTIFACTS_DIR": "/from-secret/current",
+            "TASKORCH_ARTIFACTS_DIR": "/from-secret/legacy",
+        },
+    )
+
+    env = await _dispatched_env(
+        settings,
+        task,
+        source_env={
+            "PATH": "/usr/bin",
+            "ORCASTER_CACHE_DIR": "/from-worker-env/current",
+            "TASKORCH_CACHE_DIR": "/from-worker-env/legacy",
+        },
+    )
+
+    cache_dir = settings.resolved_cache_root() / "tasks" / idem
+    assert env["ORCASTER_CACHE_DIR"] == str(cache_dir)
+    assert env["TASKORCH_CACHE_DIR"] == str(cache_dir)
+    assert env["ORCASTER_ARTIFACTS_DIR"] == str(cache_dir / "artifacts")
+    assert env["TASKORCH_ARTIFACTS_DIR"] == str(cache_dir / "artifacts")
+
+
+@respx.mock
+async def test_dir_names_absent_when_cache_dir_fails_even_if_declared_or_supplied(
+    settings: Settings, signing_priv: Ed25519PrivateKey, tmp_path: Path
+) -> None:
+    """The four directory names belong to the worker. When it cannot create the
+    cache dir it sets none of them, and a value from the worker environment or
+    from a server secret does not take their place, even if ``task_env`` declares
+    them."""
+    from unittest.mock import patch
+
+    settings.cache_root = tmp_path / "scratch-cache"
+    settings.uv_cache_dir = None
+    names = [name for pair in _DIR_ALIASES for name in pair]
+    task = _signed_run_batch_task(
+        signing_priv,
+        task_id=933,
+        idempotency_key="dddddddd-0000-0000-0000-000000000004",
+        payload={"requirements": [], "commands": ["echo hi"], "task_env": names},
+    )
+    task = dataclasses.replace(task, secrets={name: f"/from-secret/{name}" for name in names})
+
+    env = await _dispatched_env(
+        settings,
+        task,
+        source_env={"PATH": "/usr/bin", **{name: f"/from-worker-env/{name}" for name in names}},
+        extra_patches=(
+            patch(
+                "orcaster_worker.main.ensure_task_cache_dir",
+                side_effect=OSError("disk full"),
+            ),
+        ),
+    )
+
+    assert [name for name in names if name in env] == []
+
+
+@respx.mock
+async def test_dir_names_absent_in_legacy_mode_when_cache_dir_fails(
+    settings: Settings, signing_priv: Ed25519PrivateKey, tmp_path: Path
+) -> None:
+    """Legacy mode (no ``task_env``) copies the worker environment; the four
+    directory names are still never taken from it."""
+    from unittest.mock import patch
+
+    settings.cache_root = tmp_path / "scratch-cache"
+    settings.uv_cache_dir = None
+    # Without this the worker promotes an absent ``task_env`` to strict mode.
+    settings.enforce_isolation = False
+    names = [name for pair in _DIR_ALIASES for name in pair]
+    task = _signed_run_batch_task(
+        signing_priv,
+        task_id=934,
+        idempotency_key="dddddddd-0000-0000-0000-000000000005",
+        payload={"requirements": [], "commands": ["echo hi"]},
+    )
+
+    env = await _dispatched_env(
+        settings,
+        task,
+        source_env={"PATH": "/usr/bin", **{name: f"/from-worker-env/{name}" for name in names}},
+        extra_patches=(
+            patch(
+                "orcaster_worker.main.ensure_task_cache_dir",
+                side_effect=OSError("disk full"),
+            ),
+        ),
+    )
+
+    assert [name for name in names if name in env] == []
+
+
+@respx.mock
+async def test_stored_secret_with_dir_name_is_not_delivered_to_the_task(
+    settings: Settings, signing_priv: Ed25519PrivateKey, tmp_path: Path
+) -> None:
+    """A secret stored under one of the four names before they were reserved may
+    still arrive from the server. The task never sees its value: the worker
+    directory applies, also for a lowercase name that is not a directory name."""
+    settings.cache_root = tmp_path / "scratch-cache"
+    settings.uv_cache_dir = None
+    settings.cache_delete_on_success = False
+    idem = "dddddddd-0000-0000-0000-000000000006"
+    names = [name for pair in _DIR_ALIASES for name in pair]
+    task = _signed_run_batch_task(
+        signing_priv,
+        task_id=935,
+        idempotency_key=idem,
+        payload={
+            "requirements": [],
+            "commands": ["echo hi"],
+            "task_env": [*names, "orcaster_cache_dir"],
+        },
+    )
+    secrets = {name: "/from-stored-secret" for name in names}
+    secrets["orcaster_cache_dir"] = "/from-stored-secret"
+    task = dataclasses.replace(task, secrets=secrets)
+
+    env = await _dispatched_env(settings, task)
+
+    assert "/from-stored-secret" not in env.values()
+    cache_dir = settings.resolved_cache_root() / "tasks" / idem
+    assert env["TASKORCH_CACHE_DIR"] == str(cache_dir)
+    assert env["TASKORCH_ARTIFACTS_DIR"] == str(cache_dir / "artifacts")

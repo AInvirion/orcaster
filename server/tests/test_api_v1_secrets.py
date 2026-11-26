@@ -304,7 +304,9 @@ async def test_cross_workspace_isolation(app_client: AsyncClient, keys_file: Pat
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("name", ["GLIBC_TUNABLES", "LD_PRELOAD", "orch_old"])
+@pytest.mark.parametrize(
+    "name", ["GLIBC_TUNABLES", "LD_PRELOAD", "orch_old", "ORCASTER_CACHE_DIR", "taskorch_cache_dir"]
+)
 async def test_delete_accepts_name_reserved_after_it_was_stored(
     app_client: AsyncClient, keys_file: Path, migrated_db_url: str, name: str
 ) -> None:
@@ -327,6 +329,79 @@ async def test_delete_accepts_name_reserved_after_it_was_stored(
         await engine.dispose()
     resp = await app_client.delete(f"/api/v1/secrets/{name}", headers=_h(token))
     assert resp.status_code == 204, resp.text
+
+
+# --- Worker-owned directory names ---------------------------------------------
+
+_DIR_NAMES = (
+    "ORCASTER_CACHE_DIR",
+    "ORCASTER_ARTIFACTS_DIR",
+    "TASKORCH_CACHE_DIR",
+    "TASKORCH_ARTIFACTS_DIR",
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "name",
+    [
+        variant
+        for base in _DIR_NAMES
+        for variant in (base, base.lower(), base[:1] + base[1:].lower())
+    ],
+)
+async def test_put_worker_owned_dir_name_is_422(
+    app_client: AsyncClient, keys_file: Path, migrated_db_url: str, name: str
+) -> None:
+    """The worker sets the cache and artifacts dir names, legacy aliases included;
+    a secret cannot take them in any letter case."""
+    token, _ = await mint_pat_via_app(role="owner")
+    resp = await app_client.put(f"/api/v1/secrets/{name}", json={"value": "v"}, headers=_h(token))
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error"] == "unprocessable_entity"
+    assert "reserved name" in resp.json()["message"]
+    assert name not in resp.text
+    engine = create_async_engine(migrated_db_url)
+    try:
+        async with engine.connect() as conn:
+            n = (await conn.execute(text("SELECT count(*) FROM task_secrets"))).scalar_one()
+    finally:
+        await engine.dispose()
+    assert n == 0
+
+
+@pytest.mark.asyncio
+async def test_dir_name_stored_before_the_reservation_is_listed_and_deletable(
+    app_client: AsyncClient, keys_file: Path, migrated_db_url: str
+) -> None:
+    """Rows stored under the directory names before they were reserved stay
+    visible to the owner, so they can be found and deleted."""
+    from orcaster_server.workspaces.constants import DEFAULT_WORKSPACE_ID
+
+    token, _ = await mint_pat_via_app(role="owner")
+    engine = create_async_engine(migrated_db_url)
+    try:
+        async with engine.begin() as conn:
+            for name in _DIR_NAMES:
+                await conn.execute(
+                    text(
+                        "INSERT INTO task_secrets (workspace_id, name, ciphertext, fingerprint) "
+                        "VALUES (:ws, :name, '\\x00', 'hmac-sha256:000000000000')"
+                    ),
+                    {"ws": DEFAULT_WORKSPACE_ID, "name": name},
+                )
+    finally:
+        await engine.dispose()
+
+    listed = await app_client.get("/api/v1/secrets", headers=_h(token))
+    assert listed.status_code == 200, listed.text
+    assert sorted(i["name"] for i in listed.json()["items"]) == sorted(_DIR_NAMES)
+
+    for name in _DIR_NAMES:
+        resp = await app_client.delete(f"/api/v1/secrets/{name}", headers=_h(token))
+        assert resp.status_code == 204, resp.text
+    listed = await app_client.get("/api/v1/secrets", headers=_h(token))
+    assert listed.json()["items"] == []
 
 
 @pytest.mark.asyncio
