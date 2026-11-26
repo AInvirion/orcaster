@@ -264,6 +264,19 @@ async def _emit_synthetic_output(
 _LEGACY_CACHE_DIR_ENV = "TASKORCH_CACHE_DIR"
 _LEGACY_ARTIFACTS_DIR_ENV = "TASKORCH_ARTIFACTS_DIR"
 
+# The task directory names the worker owns, legacy aliases included. Only the
+# worker sets them: any value already in the built env (worker environment in
+# legacy mode, or a name declared in ``task_env``) is dropped before
+# ``_prepare_cache_env`` runs, so when the cache dir cannot be prepared the task
+# gets none of them rather than a value from elsewhere. They are also reserved
+# names (``RESERVED_ENV_NAMES``), so a server secret never supplies them.
+_WORKER_OWNED_DIR_ENV_NAMES: tuple[str, ...] = (
+    "ORCASTER_CACHE_DIR",
+    _LEGACY_CACHE_DIR_ENV,
+    "ORCASTER_ARTIFACTS_DIR",
+    _LEGACY_ARTIFACTS_DIR_ENV,
+)
+
 # Every name ``_prepare_cache_env`` writes: set together, removed together.
 _CACHE_ENV_NAMES: tuple[str, ...] = (
     "ORCASTER_CACHE_DIR",
@@ -1357,6 +1370,8 @@ async def _run_external(
             # cwd (<cache_root>/run/<unique>/) is created below and deleted after the
             # dispatch.
             cmd_env = dict(venv.env)
+            for _k in _WORKER_OWNED_DIR_ENV_NAMES:
+                cmd_env.pop(_k, None)
             if cache_dir is not None:
                 try:
                     _, prepared_artifacts_dir = _prepare_cache_env(

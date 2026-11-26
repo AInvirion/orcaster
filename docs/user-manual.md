@@ -2243,6 +2243,17 @@ kind of result:
 | `ORCASTER_ARTIFACTS_DIR` | Files you want to keep and download later (requires the task to have **Collect output artifacts** enabled; see [Collecting artifacts](#collecting-artifacts)). |
 | `ORCASTER_CACHE_DIR` | Downloads reusable across executions of the same job (datasets, large packages), so they are not downloaded again. |
 
+The worker also sets `TASKORCH_ARTIFACTS_DIR` and `TASKORCH_CACHE_DIR` to the
+same two directories. They are **deprecated** aliases, kept only for tasks
+written before the product was renamed; use the `ORCASTER_*` names in new
+tasks.
+
+The worker always sets these four variables itself. A value from
+**Environment variables**, from the worker's environment or from a task secret
+never replaces them, and none of the four can be stored as a secret (see
+[Setting a secret](#setting-a-secret-owner-only)). If the worker cannot create
+the cache directory, the task runs without any of the four.
+
 The working directory (`cwd`) where each command starts is **ephemeral and
 is always deleted** when the task finishes, whether it succeeds or not. Do not
 write anything there that you need to keep.
@@ -3731,7 +3742,9 @@ prefixes, without the list of reserved names. The following are not accepted:
     `CC`, `CXX`, `CPP`, `LDSHARED`, `CFLAGS`, `LDFLAGS`, `MAKEFLAGS`,
     `GOFLAGS`, `RUSTC_WRAPPER`, `LESSOPEN`, `PAGER`, `EDITOR`, `VISUAL`,
     `SHELL`, `CURL_HOME`, `WGETRC`, `HGRCPATH`, `HF_ENDPOINT`,
-    `SSLKEYLOGFILE`, `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` and `ALL_PROXY`;
+    `SSLKEYLOGFILE`, `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`,
+    and the task directories `ORCASTER_CACHE_DIR`, `ORCASTER_ARTIFACTS_DIR`,
+    `TASKORCH_CACHE_DIR` and `TASKORCH_ARTIFACTS_DIR`;
   - those that start with `LD_`, `DYLD_`, `PYTHON`, `UV_`, `PIP_`,
     `SSL_CERT_`, `GIT_`, `PERL5`, `PERL_`, `RUBY`, `GEM_`, `BUNDLE_`,
     `NPM_CONFIG_`, `JAVA_`, `DOTNET_`, `CORECLR_`, `NODE_`, `CARGO_`,
@@ -3739,9 +3752,11 @@ prefixes, without the list of reserved names. The following are not accepted:
   - those that end in `_CA_BUNDLE`.
 
   If a task needs one of them, its value still comes from the worker's
-  environment. `GITHUB_TOKEN` is allowed. This list prevents whoever manages
-  the secrets from changing how a task's tools run; it does not isolate the
-  task, and it is closed except for one specific case.
+  environment; the four task directories are always set by the worker itself
+  (see [Where a task writes](#where-a-task-writes)). `GITHUB_TOKEN` is
+  allowed. This list prevents whoever manages the secrets from changing how a
+  task's tools run; it does not isolate the task, and it is closed except for
+  one specific case.
 
 **Value rules.** Non-empty, without NUL characters and up to 64 KiB. A value
 that looks like a multiline value that lost its line breaks is rejected: a PEM
@@ -3776,6 +3791,12 @@ the worker's environment, if it has one. This action cannot be undone. Deleting
 does not require the server to have its encryption keys configured: it is the
 owner's way out when a stored secret leaves tasks queued and it cannot be
 decrypted or the keys are missing.
+
+A secret saved under a name that later became reserved (for example
+`TASKORCH_CACHE_DIR`, saved before the task directories were reserved) still
+shows in the table and can be deleted as usual. A worker of this version or
+later never passes its value to a task: it applies its own value instead. An
+older worker may still pass it, so delete it.
 
 #### From the `orcaster` CLI
 
@@ -3822,7 +3843,8 @@ secret delete` works as usual, because deleting does not need the keys.
   the value from the worker's environment (`EXTRA_ENV`); if it does not exist
   there either, the variable is not defined. With the same name on both sides,
   the workspace one wins. The exception are the reserved names above: for them
-  the worker's environment value always applies.
+  the worker's environment value always applies, and the four task directories
+  always take the worker's own directories.
 - A task that uses stored secrets only runs on workers that support stored task
   secrets; until one is available it stays queued (see [Using task secrets
   instead of `EXTRA_ENV`](#moving-the-extra_env-tokens-to-the-workspace-secrets)).

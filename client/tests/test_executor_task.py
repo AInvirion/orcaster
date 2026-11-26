@@ -2520,3 +2520,108 @@ async def test_legacy_dir_aliases_not_overridable_by_task_env_or_secret(
     assert env["TASKORCH_CACHE_DIR"] == str(cache_dir)
     assert env["ORCASTER_ARTIFACTS_DIR"] == str(cache_dir / "artifacts")
     assert env["TASKORCH_ARTIFACTS_DIR"] == str(cache_dir / "artifacts")
+
+
+@respx.mock
+async def test_dir_names_absent_when_cache_dir_fails_even_if_declared_or_supplied(
+    settings: Settings, signing_priv: Ed25519PrivateKey, tmp_path: Path
+) -> None:
+    """The four directory names belong to the worker. When it cannot create the
+    cache dir it sets none of them, and a value from the worker environment or
+    from a server secret does not take their place, even if ``task_env`` declares
+    them."""
+    from unittest.mock import patch
+
+    settings.cache_root = tmp_path / "scratch-cache"
+    settings.uv_cache_dir = None
+    names = [name for pair in _DIR_ALIASES for name in pair]
+    task = _signed_run_batch_task(
+        signing_priv,
+        task_id=933,
+        idempotency_key="dddddddd-0000-0000-0000-000000000004",
+        payload={"requirements": [], "commands": ["echo hi"], "task_env": names},
+    )
+    task = dataclasses.replace(task, secrets={name: f"/from-secret/{name}" for name in names})
+
+    env = await _dispatched_env(
+        settings,
+        task,
+        source_env={"PATH": "/usr/bin", **{name: f"/from-worker-env/{name}" for name in names}},
+        extra_patches=(
+            patch(
+                "orcaster_worker.main.ensure_task_cache_dir",
+                side_effect=OSError("disk full"),
+            ),
+        ),
+    )
+
+    assert [name for name in names if name in env] == []
+
+
+@respx.mock
+async def test_dir_names_absent_in_legacy_mode_when_cache_dir_fails(
+    settings: Settings, signing_priv: Ed25519PrivateKey, tmp_path: Path
+) -> None:
+    """Legacy mode (no ``task_env``) copies the worker environment; the four
+    directory names are still never taken from it."""
+    from unittest.mock import patch
+
+    settings.cache_root = tmp_path / "scratch-cache"
+    settings.uv_cache_dir = None
+    # Without this the worker promotes an absent ``task_env`` to strict mode.
+    settings.enforce_isolation = False
+    names = [name for pair in _DIR_ALIASES for name in pair]
+    task = _signed_run_batch_task(
+        signing_priv,
+        task_id=934,
+        idempotency_key="dddddddd-0000-0000-0000-000000000005",
+        payload={"requirements": [], "commands": ["echo hi"]},
+    )
+
+    env = await _dispatched_env(
+        settings,
+        task,
+        source_env={"PATH": "/usr/bin", **{name: f"/from-worker-env/{name}" for name in names}},
+        extra_patches=(
+            patch(
+                "orcaster_worker.main.ensure_task_cache_dir",
+                side_effect=OSError("disk full"),
+            ),
+        ),
+    )
+
+    assert [name for name in names if name in env] == []
+
+
+@respx.mock
+async def test_stored_secret_with_dir_name_is_not_delivered_to_the_task(
+    settings: Settings, signing_priv: Ed25519PrivateKey, tmp_path: Path
+) -> None:
+    """A secret stored under one of the four names before they were reserved may
+    still arrive from the server. The task never sees its value: the worker
+    directory applies, also for a lowercase name that is not a directory name."""
+    settings.cache_root = tmp_path / "scratch-cache"
+    settings.uv_cache_dir = None
+    settings.cache_delete_on_success = False
+    idem = "dddddddd-0000-0000-0000-000000000006"
+    names = [name for pair in _DIR_ALIASES for name in pair]
+    task = _signed_run_batch_task(
+        signing_priv,
+        task_id=935,
+        idempotency_key=idem,
+        payload={
+            "requirements": [],
+            "commands": ["echo hi"],
+            "task_env": [*names, "orcaster_cache_dir"],
+        },
+    )
+    secrets = {name: "/from-stored-secret" for name in names}
+    secrets["orcaster_cache_dir"] = "/from-stored-secret"
+    task = dataclasses.replace(task, secrets=secrets)
+
+    env = await _dispatched_env(settings, task)
+
+    assert "/from-stored-secret" not in env.values()
+    cache_dir = settings.resolved_cache_root() / "tasks" / idem
+    assert env["TASKORCH_CACHE_DIR"] == str(cache_dir)
+    assert env["TASKORCH_ARTIFACTS_DIR"] == str(cache_dir / "artifacts")

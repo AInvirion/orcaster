@@ -181,9 +181,11 @@ the API, and the error does not repeat the name (the server's name errors do not
 either). The server also rejects with `422` names longer than 128 characters and
 reserved ones, regardless of case (`PATH`, the fixed base of strict `task_env`,
 the variables that control the shell, the loader, the runtimes, the build,
-helper programs and the proxy, and prefixes such as `LD_`, `PYTHON`, `UV_`,
-`PIP_`, `GIT_`, `NODE_`, `CARGO_` or `NPM_CONFIG_`; the server applies the full
-list when validating the name). `GITHUB_TOKEN` is allowed.
+helper programs and the proxy, the task directory variables
+`ORCASTER_CACHE_DIR`, `ORCASTER_ARTIFACTS_DIR` and their deprecated aliases
+`TASKORCH_CACHE_DIR` and `TASKORCH_ARTIFACTS_DIR`, and prefixes such as `LD_`,
+`PYTHON`, `UV_`, `PIP_`, `GIT_`, `NODE_`, `CARGO_` or `NPM_CONFIG_`; the server
+applies the full list when validating the name). `GITHUB_TOKEN` is allowed.
 
 The name travels in the URL (`PUT` and `DELETE /api/v1/secrets/{name}`), so a
 proxy that logs paths sees it before the server validates it. `orcaster secret

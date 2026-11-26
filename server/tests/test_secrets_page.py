@@ -600,6 +600,34 @@ async def test_delete_secret_prg_flash_and_audit(
 
 
 @pytest.mark.asyncio
+async def test_dir_name_stored_before_the_reservation_is_listed_and_deletable(
+    authed_admin_client: AsyncClient, keys_file: Path
+) -> None:
+    """A row stored under a worker-owned directory name before the reservation
+    shows in the table with its delete action, and the owner can delete it."""
+    engine = create_async_engine(settings.database_url)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO task_secrets (workspace_id, name, ciphertext, fingerprint) "
+                    "VALUES (:ws, 'TASKORCH_CACHE_DIR', '\\x00', 'hmac-sha256:000000000000')"
+                ),
+                {"ws": DEFAULT_WORKSPACE_ID},
+            )
+    finally:
+        await engine.dispose()
+
+    page = await authed_admin_client.get("/admin/secrets", headers=NO_HTMX)
+    assert page.status_code == 200, page.text
+    assert 'data-confirm-url="/admin/secrets/TASKORCH_CACHE_DIR/delete"' in page.text
+
+    resp = await _delete(authed_admin_client, "TASKORCH_CACHE_DIR")
+    assert resp.status_code == 303, resp.text
+    assert await _secret_rows() == []
+
+
+@pytest.mark.asyncio
 async def test_fetch_follow_does_not_consume_flash(
     authed_admin_client: AsyncClient, keys_file: Path
 ) -> None:
@@ -633,6 +661,8 @@ async def test_fetch_follow_does_not_consume_flash(
         ("ORCH_TOKEN", VALUE, "ORCH_"),
         ("PATH", VALUE, "reserved"),
         ("LD_PRELOAD", VALUE, "reserved"),
+        ("orcaster_cache_dir", VALUE, "reserved"),
+        ("TASKORCH_ARTIFACTS_DIR", VALUE, "reserved"),
         ("", VALUE, "non-empty"),
         ("A" * 129, VALUE, "at most 128"),
         ("API_TOKEN", "", "non-empty"),
@@ -645,6 +675,8 @@ async def test_fetch_follow_does_not_consume_flash(
         "orch-prefix",
         "reserved-path",
         "reserved-ld-prefix",
+        "reserved-dir-name-lowercase",
+        "reserved-legacy-dir-alias",
         "empty-name",
         "long-name",
         "empty-value",

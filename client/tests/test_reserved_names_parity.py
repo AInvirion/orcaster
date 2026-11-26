@@ -96,6 +96,25 @@ def test_reserved_is_case_insensitive(name: str) -> None:
 
 @pytest.mark.parametrize(
     "name",
+    [
+        "ORCASTER_CACHE_DIR",
+        "orcaster_cache_dir",
+        "ORCASTER_ARTIFACTS_DIR",
+        "Orcaster_Artifacts_Dir",
+        "TASKORCH_CACHE_DIR",
+        "taskorch_cache_dir",
+        "TASKORCH_ARTIFACTS_DIR",
+        "TaskOrch_Artifacts_Dir",
+    ],
+)
+def test_worker_owned_dir_names_are_reserved(name: str) -> None:
+    """The worker sets the cache and artifacts dir names itself, legacy aliases
+    included: a server secret never supplies them, in any letter case."""
+    assert is_reserved_env_name(name)
+
+
+@pytest.mark.parametrize(
+    "name",
     ["GITHUB_TOKEN", "HF_TOKEN", "GITHUB_TOKENS", "OPENROUTER_API_KEY", "hf_token"],
 )
 def test_common_tokens_stay_allowed(name: str) -> None:
