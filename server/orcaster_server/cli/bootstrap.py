@@ -9,7 +9,7 @@ invitation -> membership seam.
 Usage:
     orcaster-bootstrap-owner
     orcaster-bootstrap-owner --name "Acme"
-    orcaster-bootstrap-owner --name "Acme" --label ada@acme.cl
+    orcaster-bootstrap-owner --name "Acme" --label ada@example.com
 
 Without `--name` it adopts the `Default` workspace (slug `default`); with
 `--name` it creates a new one, deriving the slug from the name.

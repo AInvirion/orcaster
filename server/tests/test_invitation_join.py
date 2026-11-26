@@ -67,7 +67,7 @@ async def _invite(workspace_id: str, role: str = "member") -> str:
             s,
             CFG,
             payload={"workspace_id": workspace_id, "role": role},
-            label="join@acme.cl",
+            label="join@example.com",
             created_by_user_id=None,
         )
         await s.commit()
@@ -907,7 +907,7 @@ async def test_accept_page_expired_hides_distinct_label_and_keeps_join_form(
     # The payload references the workspace under test: if the page described an
     # expired invitation, it would print its name and the assertions would fail.
     ws = await _create_workspace("Expired Distinct Corp")
-    token = await _invite_with_label(ws, "secret-label@acme.cl")
+    token = await _invite_with_label(ws, "secret-label@example.com")
     await _expire(token)
     sess = await _mint_session_for_workspace(DEFAULT_WORKSPACE_ID)
 
@@ -915,7 +915,7 @@ async def test_accept_page_expired_hides_distinct_label_and_keeps_join_form(
 
     assert resp.status_code == 200
     _assert_nothing_disclosed(
-        resp.text, ws_name="Expired Distinct Corp", label="secret-label@acme.cl", role="member"
+        resp.text, ws_name="Expired Distinct Corp", label="secret-label@example.com", role="member"
     )
     assert f'action="/auth/accept/{token}/join"' in resp.text
 
@@ -939,7 +939,7 @@ async def test_accept_page_disabled_workspace_withheld_for_non_canonical_id(
     """An alias of a disabled workspace's UUID must not make the page fall
     back to the saved label (which in admin invitations is the name)."""
     name = "Alias Secret Corp"
-    label = "alias-secret-label@acme.cl"
+    label = "alias-secret-label@example.com"
     ws = await _create_workspace(name)
     token = await _invite_with_raw_payload({"workspace_id": make_id(ws), "role": role}, label)
     await _disable_workspace(ws)
@@ -1005,7 +1005,7 @@ async def test_accept_page_expired_skips_describe_and_logs_nothing(
     describe_spy: list[str],
     payload: object,
 ) -> None:
-    token = await _invite_with_raw_payload(payload, "expired-malformed@acme.cl")
+    token = await _invite_with_raw_payload(payload, "expired-malformed@example.com")
     await _expire(token)
 
     with caplog.at_level(logging.WARNING, logger="orcaster_server.workspaces.seam"):
@@ -1013,7 +1013,7 @@ async def test_accept_page_expired_skips_describe_and_logs_nothing(
 
     assert resp.status_code == 200
     assert _NEUTRAL_LINE in resp.text
-    assert "expired-malformed@acme.cl" not in resp.text
+    assert "expired-malformed@example.com" not in resp.text
     assert describe_spy == []
     assert [
         r.getMessage() for r in caplog.records if r.name == "orcaster_server.workspaces.seam"
@@ -1031,7 +1031,7 @@ async def test_accept_page_revoked_returns_410_without_workspace_data(
     app_client: AsyncClient, logged_in: bool
 ) -> None:
     ws = await _create_workspace("Revoked Corp")
-    token = await _invite_with_label(ws, "revoked-label@acme.cl", role="owner")
+    token = await _invite_with_label(ws, "revoked-label@example.com", role="owner")
     async with _sm()() as s:
         await revoke_invitation(s, token)
         await s.commit()
@@ -1045,7 +1045,7 @@ async def test_accept_page_revoked_returns_410_without_workspace_data(
     assert resp.status_code == 410
     assert "This invite is no longer valid" in resp.text
     assert "Revoked Corp" not in resp.text
-    assert "revoked-label@acme.cl" not in resp.text
+    assert "revoked-label@example.com" not in resp.text
     assert "owner" not in resp.text
 
 
@@ -1055,7 +1055,7 @@ async def test_accept_page_used_returns_410_without_workspace_data(
     app_client: AsyncClient, logged_in: bool
 ) -> None:
     ws = await _create_workspace("Used Corp")
-    token = await _invite_with_label(ws, "used-label@acme.cl", role="owner")
+    token = await _invite_with_label(ws, "used-label@example.com", role="owner")
     joiner = await _mint_session_for_workspace(DEFAULT_WORKSPACE_ID)
     assert (await _post_join(app_client, token, joiner)).status_code == 303
     headers = {"Cookie": f"session={joiner}"} if logged_in else {}
@@ -1065,5 +1065,5 @@ async def test_accept_page_used_returns_410_without_workspace_data(
     assert resp.status_code == 410
     assert "This invite is no longer valid" in resp.text
     assert "Used Corp" not in resp.text
-    assert "used-label@acme.cl" not in resp.text
+    assert "used-label@example.com" not in resp.text
     assert "owner" not in resp.text

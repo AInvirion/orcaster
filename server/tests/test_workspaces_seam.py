@@ -172,7 +172,7 @@ async def test_register_ceremony_creates_membership(app_client, migrated_db_url)
                 s,
                 AuthConfig(rp_id=rp_id, rp_name="T", origin=origin),
                 payload={"workspace_id": ws_id, "role": "owner"},
-                label="new@acme.cl",
+                label="new@example.com",
                 created_by_user_id=None,
             )
             await s.commit()
