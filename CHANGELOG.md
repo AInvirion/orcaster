@@ -7,6 +7,10 @@ This project versions the system as a whole (server + client + CLI) under a sing
 
 ## [Unreleased]
 
+### Changed
+
+- The README explains why the project is named Orcaster.
+
 ## [2.0.0] - 2026-11-25
 
 First public release.
