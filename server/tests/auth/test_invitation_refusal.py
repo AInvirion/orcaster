@@ -63,7 +63,7 @@ async def _disable(ws_id: str) -> None:
 async def _invite(payload: dict) -> str:
     async with _sm()() as s:
         token = await create_invitation(
-            s, CFG, payload=payload, label="x@acme.cl", created_by_user_id=None
+            s, CFG, payload=payload, label="x@example.com", created_by_user_id=None
         )
         await s.commit()
         return token
