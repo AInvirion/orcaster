@@ -541,6 +541,12 @@ worker exports to the subprocess:
 |---|---|---|
 | `ORCASTER_CACHE_DIR` | Persists across retries after a failure; deleted on successful completion (default ON) | Reusable download cache (e.g. `--local-dir $ORCASTER_CACHE_DIR`). The worker also points `HF_HOME`, `PIP_CACHE_DIR` and `XDG_CACHE_HOME` to subdirectories of this path. |
 | `ORCASTER_ARTIFACTS_DIR` | Persists; downloadable from the dashboard | The job's output artifacts. |
+| `TASKORCH_CACHE_DIR` | Same directory as `ORCASTER_CACHE_DIR` | **Deprecated** alias, kept for tasks written before the rename. Use `ORCASTER_CACHE_DIR` in new tasks. |
+| `TASKORCH_ARTIFACTS_DIR` | Same directory as `ORCASTER_ARTIFACTS_DIR` | **Deprecated** alias, kept for tasks written before the rename. Use `ORCASTER_ARTIFACTS_DIR` in new tasks. |
+
+The worker sets the four names itself after it builds the task environment, so
+a value declared in `task_env` or stored as a task secret does not replace them.
+If the cache directory cannot be created, the worker sets none of them.
 
 ---
 

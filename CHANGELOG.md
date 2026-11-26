@@ -7,6 +7,13 @@ This project versions the system as a whole (server + client + CLI) under a sing
 
 ## [Unreleased]
 
+### Added
+
+- The worker exports `TASKORCH_CACHE_DIR` and `TASKORCH_ARTIFACTS_DIR` to the
+  task as deprecated aliases of `ORCASTER_CACHE_DIR` and
+  `ORCASTER_ARTIFACTS_DIR`, with the same values. Tasks written before the
+  rename read those names and found them empty on a 2.0.0 worker.
+
 ### Changed
 
 - The README explains why the project is named Orcaster.
