@@ -11,6 +11,7 @@
 ## Table of Contents
 
 - [About](#about)
+- [Why the name Orcaster?](#why-the-name-orcaster)
 - [Features](#features)
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
@@ -48,6 +49,10 @@ Orcaster has three parts:
   `orcaster-server`.
 - **CLI**: `orcaster`, a Go binary that operates a workspace through the JSON API
   with a personal access token.
+
+## Why the name Orcaster?
+
+The name Orcaster blends “orchestra”, “orchestrator” and “orc caster”, a nod to the days when I played a multi-target mage in an old MMORPG. And last but not least, it also plays on swapping the S and R in Oscar, a coincidence too fitting to pass up, making the name a small tribute of gratitude to a great friend, who gave me this opportunity.
 
 ## Features
 
