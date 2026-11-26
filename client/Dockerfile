@@ -16,7 +16,7 @@ FROM ghcr.io/astral-sh/uv:0.13.9@sha256:d3b601f0c7b118bc1753febf7c41cc80981df678
 # ---------------------------------------------------------------------------
 # Builder
 # ---------------------------------------------------------------------------
-FROM docker.io/library/python:3.13-slim-bookworm AS builder
+FROM docker.io/library/python:3.13-slim-bookworm@sha256:f0fa218d5b06f9b9235024fa061cde2cb141f726de52134471053d2d9b5324a3 AS builder
 
 # Install uv (version pinned in the `uv` stage).
 COPY --from=uv /uv /usr/local/bin/uv
@@ -34,7 +34,7 @@ RUN uv sync --frozen --no-dev --no-editable
 # ---------------------------------------------------------------------------
 # Runtime
 # ---------------------------------------------------------------------------
-FROM docker.io/library/python:3.13-slim-bookworm
+FROM docker.io/library/python:3.13-slim-bookworm@sha256:f0fa218d5b06f9b9235024fa061cde2cb141f726de52134471053d2d9b5324a3
 
 # `uv` to create ephemeral per-task venvs. The builder stage already has it,
 # but `COPY --from=builder` only copies `/build/.venv`; fetching it again here
