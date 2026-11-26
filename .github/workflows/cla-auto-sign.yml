@@ -12,6 +12,9 @@ on:
   issue_comment:
     types: [created]
 
+# No permissions by default; the job below asks only for what it uses.
+permissions: {}
+
 jobs:
   auto-sign:
     if: github.event.issue.pull_request && contains(github.event.comment.body, 'I have read the Contributor License Agreement and I hereby accept the terms')

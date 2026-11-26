@@ -284,7 +284,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install pytest
-        run: pip install pytest==9.2.0
+        run: pip install --require-hashes -r scripts/tests/requirements.txt
 
       - name: Tests (pytest)
         run: python3 -m pytest -q scripts/tests
