@@ -1,6 +1,6 @@
 [project]
 name = "orcaster-worker"
-version = "2.0.0"
+version = "2.0.1"
 description = "Orcaster worker: claims tasks from an Orcaster server, runs them and reports the results"
 readme = "README.pypi.md"
 license = "Apache-2.0"
