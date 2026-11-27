@@ -7,6 +7,8 @@ This project versions the system as a whole (server + client + CLI) under a sing
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-11-26
+
 ### Added
 
 - The worker exports `TASKORCH_CACHE_DIR` and `TASKORCH_ARTIFACTS_DIR` to the
